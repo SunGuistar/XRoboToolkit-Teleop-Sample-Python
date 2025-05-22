@@ -14,7 +14,6 @@ The current implementation focuses on a UR5e robot arm, providing real-time cont
 -   Intuitive control using XR controllers.
 -   Coordinate frame transformations between XR and robot spaces.
 -   Support for Universal Robots UR5e (expandable to other robots).
--   Utilities for converting robot models between URDF and MuJoCo XML formats (see `assets/urdf_to_mjcf.py`).
 -   Inverse kinematics solving using Placo.
 
 ## Dependencies
@@ -30,7 +29,7 @@ The main dependencies are listed in the [`pyproject.toml`](pyproject.toml) file 
 
 1.  **Clone the repository:**
     ```bash
-    git clone <your-repository-url>
+    git clone https://github.com/XR-Robotics/teleop_demo_mujoco.git
     cd teleop_demo_mujoco
     ```
 
@@ -39,7 +38,6 @@ The main dependencies are listed in the [`pyproject.toml`](pyproject.toml) file 
     ```bash
     bash setup_conda.sh <your_desired_env_name>
     ```
-
 
     After the script completes, activate the environment:
     ```bash
@@ -59,6 +57,6 @@ The main dependencies are listed in the [`pyproject.toml`](pyproject.toml) file 
 To run the teleoperation demo with a UR5e robot:
 
 ```bash
-python scripts/ur5e_demo.py
+python scripts/ur5e_dual_arm_demo.py
 ```
 This script initializes the [`MujocoTeleopController`](teleop_demo_mujoco/mujoco_teleop_controller.py) with the UR5e model and starts the teleoperation loop.

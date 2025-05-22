@@ -1,5 +1,7 @@
 import os
-from teleop_demo_mujoco.mujoco_teleop_controller import MujocoTeleopController
+from teleop_demo_mujoco.mujoco_teleop_controller_single_effector import (
+    MujocoTeleopControllerSingleEffector,
+)
 from teleop_demo_mujoco.path_utils import ASSET_PATH
 
 
@@ -10,7 +12,7 @@ def main():
     )
 
     # Create and initialize the teleoperation controller
-    controller = MujocoTeleopController(
+    controller = MujocoTeleopControllerSingleEffector(
         xml_path=xml_path,
         robot_urdf_path=robot_urdf_path,
         end_effector_name="tool0",

@@ -1,3 +1,4 @@
+from typing import Dict, Any
 import os
 import mujoco
 from mujoco import viewer as mj_viewer
@@ -23,14 +24,14 @@ from teleop_demo_mujoco.geometry import (
 class MujocoTeleopController:
     def __init__(
         self,
-        xml_path,
-        robot_urdf_path,
-        end_effector_name="wrist_3_link",
-        vis_target="target",
+        xml_path: str,
+        robot_urdf_path: str,
+        end_effector_config: Dict[str, Dict[str, Any]],
         floating_base=False,
         R_headset_world=R_HEADSET_TO_WORLD,
         visualize_placo=False,
         scale_factor=1.0,
+        q_init=None,
     ):
         """
         Initialize the teleoperation controller.
@@ -38,8 +39,7 @@ class MujocoTeleopController:
         Args:
             xml_path: Path to the MuJoCo XML scene file
             robot_urdf_path: Path to the robot URDF file for IK solving
-            end_effector_name: Name of the end effector link
-            vis_target: Name of the mocap target body in MuJoCo scene
+            end_effector_config: Dictionary containing end effector configurations
             floating_base: Whether the robot has a floating base
             R_headset_world: Rotation matrix to transform headset coordinates to world coordinates
             visualize_placo: Whether to visualize the placo IK solver
@@ -47,63 +47,39 @@ class MujocoTeleopController:
         """
         self.xml_path = xml_path
         self.robot_urdf_path = robot_urdf_path
-        self.end_effector_name = end_effector_name
-        self.vis_target = vis_target
+        self.end_effector_config = end_effector_config
         self.floating_base = floating_base
+        self.R_headset_world = R_headset_world
+        self.visualize_placo = visualize_placo
+        self.scale_factor = scale_factor
+        self.q_init = q_init
 
         # To be initialized later
         self.mj_model = None
         self.mj_data = None
         self.placo_robot = None
         self.solver = None
-        self.effector_task = None
         self.dt = None
         self.t = 0
-        self.target_mocap_idx = -1
+        self.effector_task = {name: None for name in end_effector_config.keys()}
+        self.target_mocap_idx = {
+            name: -1 for name in end_effector_config.keys()
+        }
 
         # Initial poses
-        self.init_ee_xyz = None
-        self.init_ee_quat = None
-        self.init_controller_xyz = None
-        self.init_controller_quat = None
-
-        # Coordinate transformation
-        self.R_headset_world = R_headset_world
-
-        # placo visualization
-        self.visualize_placo = visualize_placo
-        self.scale_factor = scale_factor
+        self.init_ee_xyz = {name: None for name in end_effector_config.keys()}
+        self.init_ee_quat = {name: None for name in end_effector_config.keys()}
+        self.init_controller_xyz = {
+            name: None for name in end_effector_config.keys()
+        }
+        self.init_controller_quat = {
+            name: None for name in end_effector_config.keys()
+        }
 
     def initialize(self):
         """Set up the MuJoCo simulation and the IK solver."""
-        # Load MuJoCo model
-        self.mj_model = mujoco.MjModel.from_xml_path(self.xml_path)
-        self.mj_data = mujoco.MjData(self.mj_model)
-
-        # Configure scene lighting
-        self.mj_model.vis.headlight.ambient = [0.4, 0.4, 0.4]
-        self.mj_model.vis.headlight.diffuse = [0.8, 0.8, 0.8]
-        self.mj_model.vis.headlight.specular = [0.6, 0.6, 0.6]
-
-        # Set initial position from keyframe if available
-        mujoco.mj_resetData(self.mj_model, self.mj_data)
-        try:
-            mujoco.mj_resetDataKeyframe(
-                self.mj_model, self.mj_data, self.mj_model.key("home").id
-            )
-        except Exception as e:
-            print(f"Warning: Could not reset to 'home' keyframe: {e}")
-
-        # Calculate forward kinematics to get initial end effector pose
-        mujoco.mj_forward(self.mj_model, self.mj_data)
-
-        # Setup placo IK solver
+        self._setup_mujoco()
         self._setup_placo()
-
-        # Setup mocap target
-        self._setup_mocap_target()
-
-        return self
 
     def _get_end_effector_info(self, ee_name):
         """Get the end effector position and orientation."""
@@ -120,46 +96,100 @@ class MujocoTeleopController:
 
         return ee_xyz, ee_quat
 
+    def _setup_mujoco(self):
+        # Load MuJoCo model
+        self.mj_model = mujoco.MjModel.from_xml_path(self.xml_path)
+        self.mj_data = mujoco.MjData(self.mj_model)
+
+        # Print all joint names
+        print("Joint names in the Mujoco model:")
+        for i in range(self.mj_model.njnt):
+            joint_name = mujoco.mj_id2name(
+                self.mj_model, mujoco.mjtObj.mjOBJ_JOINT, i
+            )
+            print(f"  {joint_name}")
+
+        # Configure scene lighting
+        self.mj_model.vis.headlight.ambient = [0.4, 0.4, 0.4]
+        self.mj_model.vis.headlight.diffuse = [0.8, 0.8, 0.8]
+        self.mj_model.vis.headlight.specular = [0.6, 0.6, 0.6]
+
+        # Set initial position from keyframe if available
+        mujoco.mj_resetData(self.mj_model, self.mj_data)
+        if self.q_init is None:
+            mujoco.mj_resetDataKeyframe(
+                self.mj_model, self.mj_data, self.mj_model.key("home").id
+            )
+        else:
+            self.mj_data.qpos[:] = self.q_init
+            mujoco.mj_forward(self.mj_model, self.mj_data)
+
+        # Calculate forward kinematics to get initial end effector pose
+        mujoco.mj_forward(self.mj_model, self.mj_data)
+        self._setup_mocap_target()
+
     def _setup_placo(self):
         """Set up the placo inverse kinematics solver."""
         self.dt = self.mj_model.opt.timestep
         self.placo_robot = placo.RobotWrapper(self.robot_urdf_path)
         self.solver = placo.KinematicsSolver(self.placo_robot)
-        self.effector_task = self.solver.add_frame_task(
-            self.end_effector_name, np.eye(4)
-        )
-        self.effector_task.configure(self.end_effector_name, "soft", 1.0)
         self.solver.dt = self.dt
+
+        # Print all joint names from placo model
+        print("Joint names in the Placo model:")
+        for joint_name in self.placo_robot.model.names:
+            if joint_name != "universe":  # Exclude the universe joint
+                print(f"  {joint_name}")
+
+        for name, config in self.end_effector_config.items():
+            ee_xyz, ee_quat = self._get_end_effector_info(config["link_name"])
+            ee_target = tf.quaternion_matrix(ee_quat)
+            ee_target[:3, 3] = ee_xyz
+            self.effector_task[name] = self.solver.add_frame_task(
+                config["link_name"], ee_target
+            )
+            self.effector_task[name].configure(name, "soft", 1.0)
+
         if self.floating_base:
             self.placo_robot.state.q = self.mj_data.qpos.copy()
         else:
             self.solver.mask_fbase(True)
             self.placo_robot.state.q[7:] = self.mj_data.qpos.copy()
-        self.placo_robot.update_kinematics()
+
         if self.visualize_placo:
+            self.placo_robot.update_kinematics()
             self.placo_vis = robot_viz(self.placo_robot)
             self.placo_vis.display(self.placo_robot.state.q)
-            robot_frame_viz(self.placo_robot, self.end_effector_name)
-            frame_viz("target", self.effector_task.T_world_frame)
+            for name, config in self.end_effector_config.items():
+                robot_frame_viz(self.placo_robot, config["link_name"])
+                frame_viz(
+                    config["vis_target"], self.effector_task[name].T_world_frame
+                )
 
     def _setup_mocap_target(self):
         """Find and set up the mocap target body."""
-        mocap_id = mujoco.mj_name2id(
-            self.mj_model, mujoco.mjtObj.mjOBJ_BODY, self.vis_target
-        )
-        if mocap_id == -1:
-            raise ValueError(
-                f"Mocap body '{self.vis_target}' not found in the model."
+        for name, config in self.end_effector_config.items():
+            vis_target = config["vis_target"]
+            mocap_id = mujoco.mj_name2id(
+                self.mj_model, mujoco.mjtObj.mjOBJ_BODY, vis_target
             )
+            if mocap_id == -1:
+                raise ValueError(
+                    f"Mocap body '{vis_target}' not found in the model."
+                )
 
-        if self.mj_model.body_mocapid[mocap_id] == -1:
-            raise ValueError(
-                f"Body '{self.vis_target}' is not configured for mocap."
+            if self.mj_model.body_mocapid[mocap_id] == -1:
+                raise ValueError(
+                    f"Body '{self.vis_target}' is not configured for mocap."
+                )
+            else:
+                self.target_mocap_idx[name] = self.mj_model.body_mocapid[
+                    mocap_id
+                ]
+
+            print(
+                f"Mocap ID for '{vis_target}' body: {self.target_mocap_idx[name]}"
             )
-        else:
-            self.target_mocap_idx = self.mj_model.body_mocapid[mocap_id]
-
-        print(f"Mocap ID for '{self.vis_target}' body: {self.target_mocap_idx}")
 
     def xr_init(self):
         """Initialize XR tracking."""
@@ -179,52 +209,95 @@ class MujocoTeleopController:
 
                 self.t += self.dt
 
-                # Get XR controller data
-                xr_grip = xr.get_right_grip()
-                active = xr_grip > 0.5
+                # # Get XR controller data
+                # xr_grip = xr.get_right_grip()
+                # active = xr_grip > 0.5
 
-                # Process current pose
-                if active:
-                    if self.init_ee_xyz is None:
-                        self.init_ee_xyz, self.init_ee_quat = (
-                            self._get_end_effector_info(self.end_effector_name)
-                        )
-                    xr_pose = xr.get_right_controller_pose()
-                    delta_xyz, delta_rot = self._process_xr_pose(xr_pose)
+                # # Process current pose
+                # if active:
+                #     if self.init_ee_xyz is None:
+                #         self.init_ee_xyz, self.init_ee_quat = (
+                #             self._get_end_effector_info(self.end_effector_name)
+                #         )
+                #     xr_pose = xr.get_right_controller_pose()
+                #     delta_xyz, delta_rot = self._process_xr_pose(xr_pose)
 
-                    target_xyz, target_quat = apply_delta_pose(
-                        self.init_ee_xyz,
-                        self.init_ee_quat,
-                        delta_xyz,
-                        delta_rot,
+                #     target_xyz, target_quat = apply_delta_pose(
+                #         self.init_ee_xyz,
+                #         self.init_ee_quat,
+                #         delta_xyz,
+                #         delta_rot,
+                #     )
+
+                #     target = tf.quaternion_matrix(target_quat)
+                #     target[:3, 3] = target_xyz
+
+                #     self.effector_task.T_world_frame = target
+                #     self._update_kinematics()
+
+                #     # Update mocap body pose
+                #     if self.target_mocap_idx != -1:
+                #         self.mj_data.mocap_pos[self.target_mocap_idx] = (
+                #             target_xyz
+                #         )
+
+                #         self.mj_data.mocap_quat[self.target_mocap_idx] = (
+                #             target_quat
+                #         )
+                # else:
+                #     self.init_controller_xyz = None
+                #     self.init_controller_quat = None
+                #     self.init_ee_quat = None
+                #     self.init_ee_xyz = None
+
+                for name, config in self.end_effector_config.items():
+                    xr_grip = xr.get_key_value_by_name(
+                        config["control_trigger"]
                     )
+                    active = xr_grip > 0.5
 
-                    target = tf.quaternion_matrix(target_quat)
-                    target[:3, 3] = target_xyz
-
-                    self.effector_task.T_world_frame = target
-                    self._update_kinematics()
-
-                    # Update mocap body pose
-                    if self.target_mocap_idx != -1:
-                        self.mj_data.mocap_pos[self.target_mocap_idx] = (
-                            target_xyz
+                    # Process current pose
+                    if active:
+                        if self.init_ee_xyz[name] is None:
+                            self.init_ee_xyz[name], self.init_ee_quat[name] = (
+                                self._get_end_effector_info(config["link_name"])
+                            )
+                        xr_pose = xr.get_pose_by_name(config["pose_source"])
+                        delta_xyz, delta_rot = self._process_xr_pose(
+                            xr_pose, name
                         )
 
-                        self.mj_data.mocap_quat[self.target_mocap_idx] = (
-                            target_quat
+                        target_xyz, target_quat = apply_delta_pose(
+                            self.init_ee_xyz[name],
+                            self.init_ee_quat[name],
+                            delta_xyz,
+                            delta_rot,
                         )
-                else:
-                    self.init_controller_xyz = None
-                    self.init_controller_quat = None
-                    self.init_ee_quat = None
-                    self.init_ee_xyz = None
+
+                        target = tf.quaternion_matrix(target_quat)
+                        target[:3, 3] = target_xyz
+
+                        self.effector_task[name].T_world_frame = target
+
+                        target_mocap_id = self.target_mocap_idx[name]
+                        if target_mocap_id != -1:
+                            self.mj_data.mocap_pos[target_mocap_id] = target_xyz
+                            self.mj_data.mocap_quat[target_mocap_id] = (
+                                target_quat
+                            )
+                    else:
+                        self.init_controller_xyz[name] = None
+                        self.init_controller_quat[name] = None
+                        self.init_ee_quat[name] = None
+                        self.init_ee_xyz[name] = None
+
+                self._update_kinematics()
 
                 # Step simulation and update viewer
                 mujoco.mj_step(self.mj_model, self.mj_data)
                 viewer.sync()
 
-    def _process_xr_pose(self, xr_pose):
+    def _process_xr_pose(self, xr_pose, src_name):
         """Process the current XR controller pose."""
         # Get position and orientation
         controller_xyz = np.array([xr_pose[0], xr_pose[1], xr_pose[2]])
@@ -242,20 +315,20 @@ class MujocoTeleopController:
         R_quat = tf.quaternion_from_matrix(R_transform)
         controller_quat = tf.quaternion_multiply(R_quat, controller_quat)
 
-        if self.init_controller_xyz is None:
+        if self.init_controller_xyz[src_name] is None:
             # First time processing the pose
-            self.init_controller_xyz = controller_xyz
-            self.init_controller_quat = controller_quat
+            self.init_controller_xyz[src_name] = controller_xyz
+            self.init_controller_quat[src_name] = controller_quat
 
             delta_xyz = np.zeros(3)
             delta_rot = np.array([0.0, 0.0, 0.0])
         else:
             # Calculate relative transformation from init pose
             delta_xyz = (
-                controller_xyz - self.init_controller_xyz
+                controller_xyz - self.init_controller_xyz[src_name]
             ) * self.scale_factor
             delta_rot = quat_diff_as_angle_axis(
-                self.init_controller_quat, controller_quat
+                self.init_controller_quat[src_name], controller_quat
             )
 
         return delta_xyz, delta_rot
@@ -264,15 +337,18 @@ class MujocoTeleopController:
         # Solve IK
         self.solver.solve(True)
         self.placo_robot.update_kinematics()
-        q = self.placo_robot.state.q
-
-        # Update robot control
         if self.floating_base:
-            self.mj_data.ctrl = q
+            q = self.placo_robot.state.q
         else:
-            self.mj_data.ctrl = q[7:]
+            q = self.placo_robot.state.q[7:]
+
+        self.mj_data.ctrl = q
 
         if self.visualize_placo:
             self.placo_vis.display(self.placo_robot.state.q)
-            robot_frame_viz(self.placo_robot, self.end_effector_name)
-            frame_viz("target", self.effector_task.T_world_frame)
+
+            for name, config in self.end_effector_config.items():
+                robot_frame_viz(self.placo_robot, config["link_name"])
+                frame_viz(
+                    config["vis_target"], self.effector_task[name].T_world_frame
+                )
