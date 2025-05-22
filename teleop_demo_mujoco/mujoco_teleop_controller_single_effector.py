@@ -129,6 +129,10 @@ class MujocoTeleopControllerSingleEffector:
             self.end_effector_name, np.eye(4)
         )
         self.effector_task.configure(self.end_effector_name, "soft", 1.0)
+        self.manipulability = self.solver.add_manipulability_task(
+            self.end_effector_name, "both", 1.0
+        )
+        self.manipulability.configure("manipulability", "soft", 5e-2)
         self.solver.dt = self.dt
         if self.floating_base:
             self.placo_robot.state.q = self.mj_data.qpos.copy()

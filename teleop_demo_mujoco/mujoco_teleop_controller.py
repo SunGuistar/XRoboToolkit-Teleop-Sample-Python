@@ -149,6 +149,10 @@ class MujocoTeleopController:
                 config["link_name"], ee_target
             )
             self.effector_task[name].configure(name, "soft", 1.0)
+            manipulability = self.solver.add_manipulability_task(
+                config["link_name"], "both", 1.0
+            )
+            manipulability.configure("manipulability", "soft", 5e-2)
 
         if self.floating_base:
             self.placo_robot.state.q = self.mj_data.qpos.copy()
