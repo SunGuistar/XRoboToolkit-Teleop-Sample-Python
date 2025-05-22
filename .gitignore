@@ -31,13 +31,6 @@ mjkey.txt
 .mujoco/
 sim_data/
 
-# Visual meshes
-*.stl
-*.obj
-*.dae
-meshes/*
-!meshes/.gitkeep
-
 # IDE
 .idea/
 .vscode/
