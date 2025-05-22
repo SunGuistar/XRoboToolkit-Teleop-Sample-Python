@@ -134,6 +134,7 @@ class MujocoTeleopController:
         self.placo_robot = placo.RobotWrapper(self.robot_urdf_path)
         self.solver = placo.KinematicsSolver(self.placo_robot)
         self.solver.dt = self.dt
+        self.solver.add_kinetic_energy_regularization_task(1e-6)
 
         # Print all joint names from placo model
         print("Joint names in the Placo model:")
@@ -213,47 +214,6 @@ class MujocoTeleopController:
 
                 self.t += self.dt
 
-                # # Get XR controller data
-                # xr_grip = xr.get_right_grip()
-                # active = xr_grip > 0.5
-
-                # # Process current pose
-                # if active:
-                #     if self.init_ee_xyz is None:
-                #         self.init_ee_xyz, self.init_ee_quat = (
-                #             self._get_end_effector_info(self.end_effector_name)
-                #         )
-                #     xr_pose = xr.get_right_controller_pose()
-                #     delta_xyz, delta_rot = self._process_xr_pose(xr_pose)
-
-                #     target_xyz, target_quat = apply_delta_pose(
-                #         self.init_ee_xyz,
-                #         self.init_ee_quat,
-                #         delta_xyz,
-                #         delta_rot,
-                #     )
-
-                #     target = tf.quaternion_matrix(target_quat)
-                #     target[:3, 3] = target_xyz
-
-                #     self.effector_task.T_world_frame = target
-                #     self._update_kinematics()
-
-                #     # Update mocap body pose
-                #     if self.target_mocap_idx != -1:
-                #         self.mj_data.mocap_pos[self.target_mocap_idx] = (
-                #             target_xyz
-                #         )
-
-                #         self.mj_data.mocap_quat[self.target_mocap_idx] = (
-                #             target_quat
-                #         )
-                # else:
-                #     self.init_controller_xyz = None
-                #     self.init_controller_quat = None
-                #     self.init_ee_quat = None
-                #     self.init_ee_xyz = None
-
                 for name, config in self.end_effector_config.items():
                     xr_grip = xr.get_key_value_by_name(
                         config["control_trigger"]
@@ -266,6 +226,7 @@ class MujocoTeleopController:
                             self.init_ee_xyz[name], self.init_ee_quat[name] = (
                                 self._get_end_effector_info(config["link_name"])
                             )
+                            print(f"{name} is activated.")
                         xr_pose = xr.get_pose_by_name(config["pose_source"])
                         delta_xyz, delta_rot = self._process_xr_pose(
                             xr_pose, name
@@ -290,10 +251,13 @@ class MujocoTeleopController:
                                 target_quat
                             )
                     else:
-                        self.init_controller_xyz[name] = None
-                        self.init_controller_quat[name] = None
-                        self.init_ee_quat[name] = None
-                        self.init_ee_xyz[name] = None
+                        if self.init_ee_xyz[name] is not None:
+                            # Reset the initial pose when the controller is released
+                            self.init_ee_xyz[name] = None
+                            self.init_ee_quat[name] = None
+                            self.init_controller_xyz[name] = None
+                            self.init_controller_quat[name] = None
+                            print(f"{name} is deactivated.")
 
                 self._update_kinematics()
 
