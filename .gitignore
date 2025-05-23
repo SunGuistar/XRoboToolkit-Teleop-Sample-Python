@@ -71,3 +71,6 @@ data/
 # Environment
 .env
 .venv
+
+third_party/
+dependencies/
