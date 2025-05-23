@@ -47,7 +47,10 @@ The main dependencies are listed in the [`pyproject.toml`](pyproject.toml) file 
     bash setup.sh
     ```
 
-3. 
+3. Download and install `roboticsservice`
+    ```bash
+    dpkg -i /path/to/roboticsservice_1.0.0.0_amd64.deb
+    ```
 
 ## Usage
 
