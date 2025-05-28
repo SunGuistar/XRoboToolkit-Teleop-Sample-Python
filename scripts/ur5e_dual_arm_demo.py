@@ -37,8 +37,6 @@ def main():
         # visualize_placo=True,
     )
 
-    controller.initialize()
-    controller.xr_init()
     controller.run()
 
 

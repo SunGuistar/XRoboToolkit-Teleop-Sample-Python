@@ -70,7 +70,7 @@ if [[ "$1" == "--conda" ]]; then
 
     echo -e "[INFO] Created conda environment named '$ENV_NAME'.\n"
     echo -e "\t\t1. To activate the environment, run:                conda activate $ENV_NAME"
-    echo -e "\t\t2. To install the package, run:                     bash setup.sh --install"
+    echo -e "\t\t2. To install the package, run:                     bash setup_conda.sh --install"
     echo -e "\t\t3. To deactivate the environment, run:              conda deactivate"
     echo -e "\n"
 
@@ -114,6 +114,8 @@ elif [[ "$1" == "--install" ]]; then
     cd RoboticsService-Python
     cp ../RoboticsService-PC/RoboticsService/PXREARobotSDK/build/libPXREARobotSDK.so lib/ || { echo "Failed to copy libPXREARobotSDK.so"; exit 1; }
     python setup.py install || { echo "Failed to install RoboticsService-Python"; exit 1; }
+    cd ..
+    rm -rf RoboticsService-PC
 
     # cd ..
     # git clone https://github.com/zhigenzhao/placo.git
@@ -121,13 +123,12 @@ elif [[ "$1" == "--install" ]]; then
     # git checkout xml_experimental || { echo "Failed to checkout xml_experimental branch"; exit 1; }
     # bash setup.sh --install || { echo "Failed to run placo setup"; exit 1; }
 
-    cd ../..
+    cd ..
 
     pip install -e . || { echo "Failed to install teleop_demo_mujoco with pip"; exit 1; }
 
     echo -e "\n"
-    echo -e "[INFO] Created conda environment named '$ENV_NAME'.\n"
-    echo -e "To activate the environment, run: conda activate $ENV_NAME"
+    echo -e "[INFO] teleop_demo_mujoco is installed in conda environment '$ENV_NAME'.\n"
     echo -e "\n"
 else
     echo "Invalid argument. Use --conda to create a conda environment or --install to install the package."

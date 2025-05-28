@@ -6,7 +6,6 @@ import numpy as np
 import pinocchio
 import placo
 import meshcat.transformations as tf
-import pyroboticsservice as xr
 
 from placo_utils.visualization import (
     robot_viz,
@@ -19,6 +18,8 @@ from teleop_demo_mujoco.geometry import (
     apply_delta_pose,
     quat_diff_as_angle_axis,
 )
+
+from teleop_demo_mujoco.pico_client import PicoClient
 
 
 class MujocoTeleopController:
@@ -53,6 +54,7 @@ class MujocoTeleopController:
         self.visualize_placo = visualize_placo
         self.scale_factor = scale_factor
         self.q_init = q_init
+        self.q_current = q_init
 
         # To be initialized later
         self.mj_model = None
@@ -76,8 +78,8 @@ class MujocoTeleopController:
             name: None for name in end_effector_config.keys()
         }
 
-    def initialize(self):
-        """Set up the MuJoCo simulation and the IK solver."""
+        self.pico_client = PicoClient()
+
         self._setup_mujoco()
         self._setup_placo()
 
@@ -196,10 +198,6 @@ class MujocoTeleopController:
                 f"Mocap ID for '{vis_target}' body: {self.target_mocap_idx[name]}"
             )
 
-    def xr_init(self):
-        """Initialize XR tracking."""
-        xr.init()
-
     def run(self):
         """Run the main teleoperation loop."""
 
@@ -215,7 +213,7 @@ class MujocoTeleopController:
                 self.t += self.dt
 
                 for name, config in self.end_effector_config.items():
-                    xr_grip = xr.get_key_value_by_name(
+                    xr_grip = self.pico_client.get_key_value_by_name(
                         config["control_trigger"]
                     )
                     active = xr_grip > 0.5
@@ -227,7 +225,9 @@ class MujocoTeleopController:
                                 self._get_end_effector_info(config["link_name"])
                             )
                             print(f"{name} is activated.")
-                        xr_pose = xr.get_pose_by_name(config["pose_source"])
+                        xr_pose = self.pico_client.get_pose_by_name(
+                            config["pose_source"]
+                        )
                         delta_xyz, delta_rot = self._process_xr_pose(
                             xr_pose, name
                         )
@@ -302,18 +302,36 @@ class MujocoTeleopController:
         return delta_xyz, delta_rot
 
     def _update_kinematics(self):
-        # Solve IK
-        self.solver.solve(True)
-        self.placo_robot.update_kinematics()
-        if self.floating_base:
-            q = self.placo_robot.state.q
-        else:
-            q = self.placo_robot.state.q[7:]
+        try:
+            self.solver.solve(True)
+            self.placo_robot.update_kinematics()
+        except RuntimeError as e:  # Catch RuntimeError
+            if "QPError" in str(e) and "NaN in the QP solution" in str(e):
+                print(f"IK solver failed with QPError (NaN): {e}")
+                if self.floating_base:
+                    self.placo_robot.state.q = self.q_current
+                else:
+                    self.placo_robot.state.q[7:] = self.q_current
+                    self.placo_robot.state.q[:7] = np.array(
+                        [0, 0, 0, 1, 0, 0, 0]
+                    )
 
-        self.mj_data.ctrl = q
+                self.placo_robot.update_kinematics()
+            else:
+                print(f"An unexpected RuntimeError occurred in IK solver: {e}")
+                return
+        except Exception as e:
+            print(f"An unexpected error occurred in IK solver: {e}")
+            return
+
+        if self.floating_base:
+            self.q_current = self.placo_robot.state.q
+        else:
+            self.q_current = self.placo_robot.state.q[7:]
+        self.mj_data.ctrl = self.q_current
 
         if self.visualize_placo:
-            self.placo_vis.display(self.placo_robot.state.q)
+            self.placo_vis.display(self.q_current)
 
             for name, config in self.end_effector_config.items():
                 robot_frame_viz(self.placo_robot, config["link_name"])
