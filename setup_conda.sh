@@ -125,10 +125,10 @@ elif [[ "$1" == "--install" ]]; then
 
     cd ..
 
-    pip install -e . || { echo "Failed to install teleop_demo_mujoco with pip"; exit 1; }
+    pip install -e . || { echo "Failed to install teleop_demo_python with pip"; exit 1; }
 
     echo -e "\n"
-    echo -e "[INFO] teleop_demo_mujoco is installed in conda environment '$ENV_NAME'.\n"
+    echo -e "[INFO] teleop_demo_python is installed in conda environment '$ENV_NAME'.\n"
     echo -e "\n"
 else
     echo "Invalid argument. Use --conda to create a conda environment or --install to install the package."

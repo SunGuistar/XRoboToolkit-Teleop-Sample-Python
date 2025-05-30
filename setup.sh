@@ -44,4 +44,4 @@ python setup.py install || { echo "Failed to install RoboticsService-Python"; ex
 
 cd ../..
 
-pip install -e . || { echo "Failed to install teleop_demo_mujoco with pip"; exit 1; }
+pip install -e . || { echo "Failed to install teleop_demo_python with pip"; exit 1; }

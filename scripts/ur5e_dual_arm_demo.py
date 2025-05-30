@@ -1,8 +1,8 @@
 import os
-from teleop_demo_mujoco.mujoco_teleop_controller import (
+from teleop_demo_python.mujoco_teleop_controller import (
     MujocoTeleopController,
 )
-from teleop_demo_mujoco.path_utils import ASSET_PATH
+from teleop_demo_python.utils.path_utils import ASSET_PATH
 
 
 def main():

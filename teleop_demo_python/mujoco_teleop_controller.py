@@ -13,13 +13,13 @@ from placo_utils.visualization import (
     frame_viz,
 )
 
-from teleop_demo_mujoco.geometry import (
+from teleop_demo_python.utils.geometry import (
     R_HEADSET_TO_WORLD,
     apply_delta_pose,
     quat_diff_as_angle_axis,
 )
 
-from teleop_demo_mujoco.pico_client import PicoClient
+from teleop_demo_python.utils.pico_client import PicoClient
 
 
 class MujocoTeleopController:
@@ -281,7 +281,7 @@ class MujocoTeleopController:
         R_transform = np.eye(4)
         R_transform[:3, :3] = self.R_headset_world
         R_quat = tf.quaternion_from_matrix(R_transform)
-        controller_quat = tf.quaternion_multiply(R_quat, controller_quat)
+        controller_quat = tf.quaternion_multiply(tf.quaternion_multiply(R_quat, controller_quat), tf.quaternion_conjugate(R_quat))
 
         if self.init_controller_xyz[src_name] is None:
             # First time processing the pose
