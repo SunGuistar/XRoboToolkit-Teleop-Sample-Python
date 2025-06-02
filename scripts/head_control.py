@@ -4,16 +4,17 @@ from teleop_demo_python.utils.pico_client import PicoClient
 import time
 import threading
 
+
 def main():
     pico_client = PicoClient()
 
     controller = DynamixelHeadController(pico_client)
-    
+
     stop_signal = threading.Event()
 
     control_thread = threading.Thread(
-        target=controller.control_loop_with_orientation_provider,
-        args=(controller.getHeadOrientationFromPico, stop_signal)
+        target=controller.run,
+        args=(controller.getHeadOrientationFromPico, stop_signal),
     )
     control_thread.start()
 
@@ -25,6 +26,7 @@ def main():
             stop_signal.set()
             control_thread.join()
             break
+
 
 if __name__ == "__main__":
     main()
