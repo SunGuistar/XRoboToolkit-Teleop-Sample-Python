@@ -1,10 +1,13 @@
-"""Module to control Robotiq's grippers - tested with HAND-E"""
+"""Module to control Robotiq's grippers - tested with HAND-E
+
+This script is modified from https://sdurobotics.gitlab.io/ur_rtde/_static/robotiq_gripper.py
+"""
 
 import socket
 import threading
 import time
 from enum import Enum
-from typing import Union, Tuple, OrderedDict
+from typing import OrderedDict, Tuple, Union
 
 
 class RobotiqGripper:
@@ -55,9 +58,7 @@ class RobotiqGripper:
         self._min_force = 0
         self._max_force = 255
 
-    def connect(
-        self, hostname: str, port: int, socket_timeout: float = 2.0
-    ) -> None:
+    def connect(self, hostname: str, port: int, socket_timeout: float = 2.0) -> None:
         """Connects to a gripper at the given address.
         :param hostname: Hostname or ip.
         :param port: Port.
@@ -142,9 +143,7 @@ class RobotiqGripper:
         """
         self._set_var(self.ACT, 0)
         self._set_var(self.ATR, 0)
-        while (
-            not self._get_var(self.ACT) == 0 or not self._get_var(self.STA) == 0
-        ):
+        while not self._get_var(self.ACT) == 0 or not self._get_var(self.STA) == 0:
             self._set_var(self.ACT, 0)
             self._set_var(self.ATR, 0)
         time.sleep(0.5)
@@ -180,18 +179,12 @@ class RobotiqGripper:
         """
         if not self.is_active():
             self._reset()
-            while (
-                not self._get_var(self.ACT) == 0
-                or not self._get_var(self.STA) == 0
-            ):
+            while not self._get_var(self.ACT) == 0 or not self._get_var(self.STA) == 0:
                 time.sleep(0.01)
 
             self._set_var(self.ACT, 1)
             time.sleep(1.0)
-            while (
-                not self._get_var(self.ACT) == 1
-                or not self._get_var(self.STA) == 3
-            ):
+            while not self._get_var(self.ACT) == 1 or not self._get_var(self.STA) == 3:
                 time.sleep(0.01)
 
         # auto-calibrate position range if desired
@@ -201,10 +194,7 @@ class RobotiqGripper:
     def is_active(self):
         """Returns whether the gripper is active."""
         status = self._get_var(self.STA)
-        return (
-            RobotiqGripper.GripperStatus(status)
-            == RobotiqGripper.GripperStatus.ACTIVE
-        )
+        return RobotiqGripper.GripperStatus(status) == RobotiqGripper.GripperStatus.ACTIVE
 
     def get_min_position(self) -> int:
         """Returns the minimum position the gripper can reach (open position)."""
@@ -239,42 +229,21 @@ class RobotiqGripper:
         :param log: Whether to print the results to log.
         """
         # first try to open in case we are holding an object
-        (position, status) = self.move_and_wait_for_pos(
-            self.get_open_position(), 64, 1
-        )
-        if (
-            RobotiqGripper.ObjectStatus(status)
-            != RobotiqGripper.ObjectStatus.AT_DEST
-        ):
-            raise RuntimeError(
-                f"Calibration failed opening to start: {str(status)}"
-            )
+        (position, status) = self.move_and_wait_for_pos(self.get_open_position(), 64, 1)
+        if RobotiqGripper.ObjectStatus(status) != RobotiqGripper.ObjectStatus.AT_DEST:
+            raise RuntimeError(f"Calibration failed opening to start: {str(status)}")
 
         # try to close as far as possible, and record the number
-        (position, status) = self.move_and_wait_for_pos(
-            self.get_closed_position(), 64, 1
-        )
-        if (
-            RobotiqGripper.ObjectStatus(status)
-            != RobotiqGripper.ObjectStatus.AT_DEST
-        ):
-            raise RuntimeError(
-                f"Calibration failed because of an object: {str(status)}"
-            )
+        (position, status) = self.move_and_wait_for_pos(self.get_closed_position(), 64, 1)
+        if RobotiqGripper.ObjectStatus(status) != RobotiqGripper.ObjectStatus.AT_DEST:
+            raise RuntimeError(f"Calibration failed because of an object: {str(status)}")
         assert position <= self._max_position
         self._max_position = position
 
         # try to open as far as possible, and record the number
-        (position, status) = self.move_and_wait_for_pos(
-            self.get_open_position(), 64, 1
-        )
-        if (
-            RobotiqGripper.ObjectStatus(status)
-            != RobotiqGripper.ObjectStatus.AT_DEST
-        ):
-            raise RuntimeError(
-                f"Calibration failed because of an object: {str(status)}"
-            )
+        (position, status) = self.move_and_wait_for_pos(self.get_open_position(), 64, 1)
+        if RobotiqGripper.ObjectStatus(status) != RobotiqGripper.ObjectStatus.AT_DEST:
+            raise RuntimeError(f"Calibration failed because of an object: {str(status)}")
         assert position >= self._min_position
         self._min_position = position
 
@@ -332,10 +301,7 @@ class RobotiqGripper:
 
         # wait until not moving
         cur_obj = self._get_var(self.OBJ)
-        while (
-            RobotiqGripper.ObjectStatus(cur_obj)
-            == RobotiqGripper.ObjectStatus.MOVING
-        ):
+        while RobotiqGripper.ObjectStatus(cur_obj) == RobotiqGripper.ObjectStatus.MOVING:
             cur_obj = self._get_var(self.OBJ)
 
         # report the actual position and the object status

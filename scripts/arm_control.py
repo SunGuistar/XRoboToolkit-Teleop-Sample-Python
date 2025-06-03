@@ -1,4 +1,4 @@
-from teleop_demo_python.hardware.ur import DualArmURController
+from teleop_demo_python.hardware import DualArmURController
 from teleop_demo_python.utils.pico_client import PicoClient
 
 

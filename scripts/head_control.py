@@ -1,8 +1,8 @@
-from teleop_demo_python.hardware.dynamixel import DynamixelHeadController
-from teleop_demo_python.utils.pico_client import PicoClient
-
-import time
 import threading
+import time
+
+from teleop_demo_python.hardware import DynamixelHeadController
+from teleop_demo_python.utils.pico_client import PicoClient
 
 
 def main():
@@ -20,7 +20,7 @@ def main():
 
     while True:
         try:
-            time.sleep(0.1)
+            time.sleep(0.01)
         except KeyboardInterrupt:
             print("Stopping head control...")
             stop_signal.set()
