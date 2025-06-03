@@ -19,8 +19,8 @@ The main dependencies are listed in the [`pyproject.toml`](pyproject.toml) file 
 
 1.  **Clone the repository:**
     ```bash
-    git clone https://github.com/XR-Robotics/teleop_demo_mujoco.git
-    cd teleop_demo_mujoco
+    git clone https://github.com/XR-Robotics/teleop_demo_python.git
+    cd teleop_demo_python
     ```
 
 2.  **Installation**
