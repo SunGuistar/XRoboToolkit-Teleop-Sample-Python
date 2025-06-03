@@ -69,7 +69,7 @@
         </body>
 
         <!-- Left Arm -->
-        <body name="left_robot_base" pos="0 0.275 0.3" quat="0.65328148 -0.27059805 -0.27059805 -0.65328148" childclass="ur5e">
+        <body name="left_robot_base" pos="0 0.275 0.3" quat="0 0 0.3826834 0.9238795" childclass="ur5e">
             <inertial mass="4" pos="0 0 0" diaginertia="0.00443333156 0.00443333156 0.0072"/>
             <geom mesh="base_0" material="black" class="visual"/>
             <geom mesh="base_1" material="jointgray" class="visual"/>
@@ -133,7 +133,7 @@
             </body>
         </body>
         <!-- Right Arm -->
-        <body name="right_robot_base" pos="0 -0.275 0.3" quat="0.65328148 0.27059805 -0.27059805 0.65328148" childclass="ur5e">
+        <body name="right_robot_base" pos="0 -0.275 0.3" quat="0.92387953 0.38268343 0. 0." childclass="ur5e">
             <inertial mass="4" pos="0 0 0" diaginertia="0.00443333156 0.00443333156 0.0072"/>
             <geom mesh="base_0" material="black" class="visual"/>
             <geom mesh="base_1" material="jointgray" class="visual"/>
@@ -219,7 +219,10 @@
 
     <keyframe>
         <key name="home"
-                 qpos="1.5708 -1.0472 1.5708 -1.5708 -1.5708 0 1.5708 -2.0944 -1.5708 -1.5708 1.5708 0"
-                 ctrl="1.5708 -1.0472 1.5708 -1.5708 -1.5708 0 1.5708 -2.0944 -1.5708 -1.5708 1.5708 0"/>
+                 qpos="2.88433112 -0.82903139  2.07572008 -0.67998028  1.52733763  2.61031443 3.3777357  -2.86530703 -1.99002441  1.0124655   1.77796691 -2.41553568"
+                 ctrl="2.88433112 -0.82903139  2.07572008 -0.67998028  1.52733763  2.61031443 3.3777357  -2.86530703 -1.99002441  1.0124655   1.77796691 -2.41553568"/>
+        <key name="zero"
+                 qpos="0 0 0 0 0 0 0 0 0 0 0 0"
+                 ctrl="0 0 0 0 0 0 0 0 0 0 0 0"/>
     </keyframe>
 </mujoco>

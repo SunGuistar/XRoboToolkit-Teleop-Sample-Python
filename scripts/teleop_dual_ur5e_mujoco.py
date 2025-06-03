@@ -34,7 +34,7 @@ def main():
         robot_urdf_path=robot_urdf_path,
         end_effector_config=config,
         scale_factor=1.5,
-        # visualize_placo=True,
+        visualize_placo=True,
     )
 
     controller.run()
