@@ -16,11 +16,15 @@ def main():
         action="store_true",
         help="Run the reset procedure for the dual arm controller.",
     )
+    parser.add_argument(
+        "--visualize_placo", action="store_true", help="Visualize Placo in the arm controller."
+    )
+
     args = parser.parse_args()
 
     pico_client = PicoClient()
     head_controller = DynamixelHeadController(pico_client)
-    arm_controller = DualArmURController(pico_client, visualize_placo=False)
+    arm_controller = DualArmURController(pico_client, visualize_placo=args.visualize_placo)
 
     if args.reset:
         print("Reset flag detected. Running arm controller reset procedure...")

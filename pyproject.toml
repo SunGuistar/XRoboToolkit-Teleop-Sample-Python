@@ -7,7 +7,7 @@ name = "teleop_demo_python"
 version = "0.1.0"
 description = "Teleoperation demo with MuJoCo and UR5 robot"
 readme = "README.md"
-requires-python = ">=3.7"
+requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [
     {name = "Zhigen", email = "zhaozhigen@gmail.com"}
@@ -34,10 +34,3 @@ packages = ["teleop_demo_python"]
 
 [tool.setuptools.package-data]
 teleop_demo_python = ["../assets/**/*"]
-
-[tool.black]
-line-length = 88
-
-[tool.isort]
-profile = "black"
-line_length = 88
