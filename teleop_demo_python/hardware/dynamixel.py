@@ -155,10 +155,6 @@ class DynamixelController:
             finally:
                 self.is_closed = True
 
-    def __del__(self):
-        """Ensures resources are released when the object is deleted."""
-        self.close()
-
 
 class DynamixelHeadController:
     """Specific controller for yaw-pitch head control using two Dynamixel motors."""
@@ -254,22 +250,21 @@ class DynamixelHeadController:
             print(f"Error fetching head orientation: {e}")
             return 0.0, 0.0  # Default values in case of error
 
-    def run(self):
-        stop_event = threading.Event()
+    def run(self, stop_event: threading.Event = threading.Event()):
         control_thread = threading.Thread(
             target=self.run_thread,
             args=(stop_event,),
         )
         control_thread.start()
 
-        while True:
+        while not stop_event.is_set():
             try:
-                time.sleep(0.1)
+                time.sleep(0.01)
             except KeyboardInterrupt:
                 print("Stopping head control...")
                 stop_event.set()
-                control_thread.join()
-                break
+
+        control_thread.join()
 
     def run_thread(self, stop_event: threading.Event):
         """

@@ -1,4 +1,6 @@
 import os
+import time
+import webbrowser
 import rtde_control
 import rtde_receive
 import numpy as np
@@ -27,15 +29,15 @@ from teleop_demo_python.utils.path_utils import ASSET_PATH
 LEFT_ROBOT_IP = "192.168.50.55"
 RIGHT_ROBOT_IP = "192.168.50.195"
 
-SERVO_TIME = 0.017  # 17ms (60Hz)
-LOOKAHEAD_TIME = 0.1  # 100ms look ahead
-SERVO_GAIN = 300.0  # Servo gain
-MAX_VELOCITY = 0.5  # 0.5 m/s
-MAX_ACCELERATION = 1.0  # 1.0 m/s^2
+SERVO_TIME = 0.017
+LOOKAHEAD_TIME = 0.1
+SERVO_GAIN = 300.0
+MAX_VELOCITY = 0.5
+MAX_ACCELERATION = 1.0
 
 GRIPPER_FORCE = 128
 GRIPPER_SPEED = 255
-CONTROLLER_DEADZONE = 0.1  # Deadzone for controller input
+CONTROLLER_DEADZONE = 0.1
 
 LEFT_INITIAL_JOINT_DEG = np.array(
     [165.26, -47.50, 118.93, -38.96, 87.51, 149.56]
@@ -83,15 +85,16 @@ class URController:
 
         self.gripper = RobotiqGripper()
         self.gripper.connect(robot_ip, 63352)
-        self.gripper.activate()
         print("Gripper connected.")
 
-    def move_to_initial_position(self):
+    def reset(self):
         print(
             f"Moving to initial joint positions: {self.initial_joint_positions}"
         )
         self.rtde_c.moveJ(self.initial_joint_positions)
         print("Reached initial position.")
+        self.gripper.activate()
+        print("Gripper activated.")
 
     def servo_joints(self, joint_positions: np.ndarray):
         t_start = self.rtde_c.initPeriod()
@@ -125,11 +128,11 @@ class URController:
     def get_current_tcp_pose(self) -> np.ndarray:
         return np.array(self.rtde_r.getActualTCPPose())
 
-    def disconnect(self):
+    def close(self):
         self.rtde_c.servoStop()
         self.rtde_c.stopScript()
         self.gripper.disconnect()
-        print("UR controller stopped and gripper disconnected.")
+        print("UR controller closed and gripper disconnected.")
 
 
 class DualArmURController:
@@ -184,16 +187,16 @@ class DualArmURController:
         # Placo Setup
         self.placo_robot = placo.RobotWrapper(self.robot_urdf_path)
         self.solver = placo.KinematicsSolver(self.placo_robot)
-        self.solver.dt = servo_time  # Or use servo_time
-        self.solver.mask_fbase(True)  # UR arms are fixed base
+        self.solver.dt = servo_time
+        self.solver.mask_fbase(True)
         self.solver.add_kinetic_energy_regularization_task(1e-6)
 
         # Define end-effector configuration (adjust link names and pico sources as needed)
         self.end_effector_config = {
             "left_arm": {
-                "link_name": "left_tool0",  # Link name in your URDF for left EE
-                "pose_source": "left_controller",  # Key in pico_client for left controller pose
-                "control_trigger": "left_grip",  # Key for left grip
+                "link_name": "left_tool0",
+                "pose_source": "left_controller",
+                "control_trigger": "left_grip",
                 "gripper_trigger": "left_trigger",
                 "vis_target": "left_target",
             },
@@ -212,8 +215,6 @@ class DualArmURController:
         self.init_controller_xyz = {}
         self.init_controller_quat = {}
         for name, config in self.end_effector_config.items():
-            # Initialize tasks with current robot pose (or a default if robot not moved yet)
-            # For simplicity, initializing with identity, will be updated on first activation
             initial_pose = np.eye(4)
             self.effector_task[name] = self.solver.add_frame_task(
                 config["link_name"], initial_pose
@@ -246,6 +247,13 @@ class DualArmURController:
         if self.visualize_placo:
             self.placo_robot.update_kinematics()
             self.placo_vis = robot_viz(self.placo_robot)
+
+            # Automatically open browser window
+            time.sleep(0.5)  # Small delay to ensure server is ready
+            meshcat_url = self.placo_vis.viewer.url()
+            print(f"Automatically opening meshcat at: {meshcat_url}")
+            webbrowser.open(meshcat_url)
+
             self.placo_vis.display(self.placo_robot.state.q)
             for name, config in self.end_effector_config.items():
                 robot_frame_viz(self.placo_robot, config["link_name"])
@@ -387,6 +395,7 @@ class DualArmURController:
             if self.visualize_placo and hasattr(self, "placo_vis"):
                 self.placo_vis.display(self.placo_robot.state.q)
                 for name, config in self.end_effector_config.items():
+                    robot_frame_viz(self.placo_robot, config["link_name"])
                     frame_viz(
                         f"target_{name}",
                         self.effector_task[name].T_world_frame,
@@ -401,13 +410,13 @@ class DualArmURController:
                 f"An unexpected error occurred in IK: {e}. Returning last known good joint positions."
             )
 
-    def move_to_initial_positions(self):
-        self.left_controller.move_to_initial_position()
-        self.right_controller.move_to_initial_position()
+    def reset(self):
+        self.left_controller.reset()
+        self.right_controller.reset()
 
-    def disconnect(self):
-        self.left_controller.disconnect()
-        self.right_controller.disconnect()
+    def close(self):
+        self.left_controller.close()
+        self.right_controller.close()
 
     def run_left_controller_thread(self, stop_event):
         print("Starting left arm control thread...")
@@ -418,7 +427,7 @@ class DualArmURController:
                 self.left_controller.gripper_speed,
                 self.left_controller.gripper_force,
             )
-        self.left_controller.disconnect()
+        self.left_controller.close()
 
     def run_right_controller_thread(self, stop_event):
         print("Starting right arm control thread...")
@@ -429,40 +438,23 @@ class DualArmURController:
                 self.right_controller.gripper_speed,
                 self.right_controller.gripper_force,
             )
-        self.right_controller.disconnect()
+        self.right_controller.close()
 
-    def run(self):  # Modified to remove get_joint_positions_func
+    def run(self, stop_event=threading.Event()):
         try:
-            self.move_to_initial_positions()
-            # Ensure Placo's initial q state matches the robot after moving to initial
-            left_q_init_actual = (
-                self.left_controller.get_current_joint_positions()
-            )
-            print(f"Left initial joint positions: {left_q_init_actual}")
-            right_q_init_actual = (
-                self.right_controller.get_current_joint_positions()
-            )
-            print(f"Right initial joint positions: {right_q_init_actual}")
-
-            self.placo_robot.state.q[7:13] = left_q_init_actual
-            self.placo_robot.state.q[13:19] = right_q_init_actual
-
-            self.placo_robot.update_kinematics()  # Update placo model with these initial positions
-
-            self.target_left_q = left_q_init_actual.copy()
-            self.target_right_q = right_q_init_actual.copy()
+            self.reset()
+            self.calc_target_joint_position()
 
         except Exception as e:
             print(
                 f"Error moving to initial positions or setting up Placo initial state: {e}"
             )
-            self.disconnect()
+            self.close()
             return
 
         print("Starting dual-arm control loop...")
 
         try:
-            stop_event = threading.Event()
             left_thread = threading.Thread(
                 target=self.run_left_controller_thread,
                 args=(stop_event,),
@@ -480,11 +472,10 @@ class DualArmURController:
                 except KeyboardInterrupt:
                     print("Keyboard interrupt received. Stopping control loop.")
                     stop_event.set()
-                    left_thread.join()
-                    right_thread.join()
-        except KeyboardInterrupt:
-            print("Keyboard interrupt received. Stopping control loop.")
+
+            left_thread.join()
+            right_thread.join()
         except Exception as e:
             print(f"Exception during control loop: {e}")
 
-        self.disconnect()
+        self.close()
