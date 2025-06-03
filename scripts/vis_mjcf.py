@@ -1,8 +1,5 @@
-from typing import Optional
-import typer
 import mujoco
 from mujoco import viewer as mj_viewer
-import numpy as np
 
 
 def main():

@@ -1,9 +1,7 @@
 from typing import Dict, Any
-import os
 import mujoco
 from mujoco import viewer as mj_viewer
 import numpy as np
-import pinocchio
 import placo
 import meshcat.transformations as tf
 
@@ -281,7 +279,10 @@ class MujocoTeleopController:
         R_transform = np.eye(4)
         R_transform[:3, :3] = self.R_headset_world
         R_quat = tf.quaternion_from_matrix(R_transform)
-        controller_quat = tf.quaternion_multiply(tf.quaternion_multiply(R_quat, controller_quat), tf.quaternion_conjugate(R_quat))
+        controller_quat = tf.quaternion_multiply(
+            tf.quaternion_multiply(R_quat, controller_quat),
+            tf.quaternion_conjugate(R_quat),
+        )
 
         if self.init_controller_xyz[src_name] is None:
             # First time processing the pose
@@ -331,7 +332,7 @@ class MujocoTeleopController:
         self.mj_data.ctrl = self.q_current
 
         if self.visualize_placo:
-            self.placo_vis.display(self.q_current)
+            self.placo_vis.display(self.placo_robot.state.q)
 
             for name, config in self.end_effector_config.items():
                 robot_frame_viz(self.placo_robot, config["link_name"])

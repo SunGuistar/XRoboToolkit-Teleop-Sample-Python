@@ -11,7 +11,7 @@
   <joint name="world_to_right_arm_base" type="fixed">
     <parent link="base_link"/>
     <child link="right_base_link"/>
-    <origin xyz="0 -0.275 0.3" rpy="0 -0.7853981633974483 1.5707963267948966"/>
+    <origin xyz="0 -0.275 0.3" rpy="0.7853981633974483 0 0"/>
   </joint>
 
   <transmission name="right_shoulder_pan_trans">
@@ -307,7 +307,7 @@
   <joint name="world_to_left_arm_base" type="fixed">
     <parent link="base_link"/>
     <child link="left_base_link"/>
-    <origin xyz="0 0.275 0.3" rpy="0 -0.7853981633974483 -1.5707963267948966"/>
+    <origin xyz="0 0.275 0.3" rpy="0.7853981633974483 0 3.141592653589793"/>
   </joint>
 
   <transmission name="left_shoulder_pan_trans">
