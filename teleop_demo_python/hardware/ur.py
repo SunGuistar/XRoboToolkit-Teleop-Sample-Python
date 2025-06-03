@@ -12,7 +12,10 @@ from placo_utils.visualization import (
 )
 
 
-from teleop_demo_python.hardware.robotiq_gripper import RobotiqGripper
+from teleop_demo_python.hardware.robotiq_gripper import (
+    RobotiqGripper,
+    calc_gripper_position,
+)
 from teleop_demo_python.utils.pico_client import PicoClient
 from teleop_demo_python.utils.geometry import (
     R_HEADSET_TO_WORLD,  # Assuming this is defined elsewhere
@@ -30,8 +33,9 @@ SERVO_GAIN = 300.0  # Servo gain
 MAX_VELOCITY = 0.5  # 0.5 m/s
 MAX_ACCELERATION = 1.0  # 1.0 m/s^2
 
-GRIPPER_FORCE = 0.5
-GRIPPER_SPEED = 1.0
+GRIPPER_FORCE = 128
+GRIPPER_SPEED = 255
+CONTROLLER_DEADZONE = 0.1  # Deadzone for controller input
 
 LEFT_INITIAL_JOINT_DEG = np.array(
     [165.26, -47.50, 118.93, -38.96, 87.51, 149.56]
@@ -47,7 +51,6 @@ DEFAULT_DUAL_ARM_URDF_PATH = os.path.join(
     ASSET_PATH, "universal_robots_ur5e/dual_ur5e.urdf"
 )
 DEFAULT_SCALE_FACTOR = 1.0
-PLACO_DT = 0.01
 
 
 class URController:
@@ -80,8 +83,7 @@ class URController:
 
         self.gripper = RobotiqGripper()
         self.gripper.connect(robot_ip, 63352)
-        if not self.gripper.is_active():
-            self.gripper.activate()
+        self.gripper.activate()
         print("Gripper connected.")
 
     def move_to_initial_position(self):
@@ -104,14 +106,14 @@ class URController:
         self.rtde_c.waitPeriod(t_start)
 
     def open_gripper(self):
-        self.gripper.move(
+        self.gripper.move_and_wait_for_pos(
             self.gripper.get_open_position(),
             self.gripper_speed,
             self.gripper_force,
         )
 
     def close_gripper(self):
-        self.gripper.move(
+        self.gripper.move_and_wait_for_pos(
             self.gripper.get_closed_position(),
             self.gripper_speed,
             self.gripper_force,
@@ -229,6 +231,11 @@ class DualArmURController:
         left_q_init = self.left_controller.get_current_joint_positions()
         right_q_init = self.right_controller.get_current_joint_positions()
 
+        self.left_gripper_pos = self.left_controller.gripper.get_open_position()
+        self.right_gripper_pos = (
+            self.right_controller.gripper.get_open_position()
+        )
+
         # 7 (base) + 6 (left) + 6 (right)
         self.placo_robot.state.q[7:13] = left_q_init
         self.placo_robot.state.q[13:19] = right_q_init
@@ -305,7 +312,22 @@ class DualArmURController:
             xr_grip_val = self.pico_client.get_key_value_by_name(
                 config["control_trigger"]
             )
-            active = xr_grip_val > 0.5
+            active = xr_grip_val > (1.0 - CONTROLLER_DEADZONE)
+            trigger_val = self.pico_client.get_key_value_by_name(
+                config["gripper_trigger"]
+            )
+            if arm_name == "left_arm":
+                self.left_gripper_pos = calc_gripper_position(
+                    self.left_controller.gripper.get_open_position(),
+                    self.left_controller.gripper.get_closed_position(),
+                    trigger_val,
+                )
+            elif arm_name == "right_arm":
+                self.right_gripper_pos = calc_gripper_position(
+                    self.right_controller.gripper.get_open_position(),
+                    self.right_controller.gripper.get_closed_position(),
+                    trigger_val,
+                )
 
             if active:
                 if self.init_ee_xyz[arm_name] is None:
@@ -387,16 +409,26 @@ class DualArmURController:
         self.left_controller.disconnect()
         self.right_controller.disconnect()
 
-    def run_left_thread(self, stop_event):
+    def run_left_controller_thread(self, stop_event):
         print("Starting left arm control thread...")
         while not stop_event.is_set():
             self.left_controller.servo_joints(self.target_left_q)
+            self.left_controller.gripper.move(
+                self.left_gripper_pos,
+                self.left_controller.gripper_speed,
+                self.left_controller.gripper_force,
+            )
         self.left_controller.disconnect()
 
-    def run_right_thread(self, stop_event):
+    def run_right_controller_thread(self, stop_event):
         print("Starting right arm control thread...")
         while not stop_event.is_set():
             self.right_controller.servo_joints(self.target_right_q)
+            self.right_controller.gripper.move(
+                self.right_gripper_pos,
+                self.right_controller.gripper_speed,
+                self.right_controller.gripper_force,
+            )
         self.right_controller.disconnect()
 
     def run(self):  # Modified to remove get_joint_positions_func
@@ -432,11 +464,11 @@ class DualArmURController:
         try:
             stop_event = threading.Event()
             left_thread = threading.Thread(
-                target=self.run_left_thread,
+                target=self.run_left_controller_thread,
                 args=(stop_event,),
             )
             right_thread = threading.Thread(
-                target=self.run_right_thread,
+                target=self.run_right_controller_thread,
                 args=(stop_event,),
             )
             left_thread.start()
