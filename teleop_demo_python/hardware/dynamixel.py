@@ -233,7 +233,7 @@ class DynamixelHeadController:
 
         return yaw_success and pitch_success
 
-    def getHeadOrientationFromPico(self) -> tuple:
+    def get_target_orientation(self) -> tuple:
         """
         Fetches the current head orientation from the Pico Robotics Service.
         Returns a tuple (yaw, pitch) in degrees.
@@ -254,7 +254,24 @@ class DynamixelHeadController:
             print(f"Error fetching head orientation: {e}")
             return 0.0, 0.0  # Default values in case of error
 
-    def run(self, get_orientation_callback, stop_event: threading.Event):
+    def run(self):
+        stop_event = threading.Event()
+        control_thread = threading.Thread(
+            target=self.run_thread,
+            args=(stop_event,),
+        )
+        control_thread.start()
+
+        while True:
+            try:
+                time.sleep(0.1)
+            except KeyboardInterrupt:
+                print("Stopping head control...")
+                stop_event.set()
+                control_thread.join()
+                break
+
+    def run_thread(self, stop_event: threading.Event):
         """
         Main control loop for head tracking.
         :param get_orientation_callback: A function that returns a tuple (current_yaw_degrees, current_pitch_degrees).
@@ -266,7 +283,9 @@ class DynamixelHeadController:
 
         try:
             while not stop_event.is_set():
-                current_yaw_raw, current_pitch_raw = get_orientation_callback()
+                current_yaw_raw, current_pitch_raw = (
+                    self.get_target_orientation()
+                )
 
                 current_yaw = current_yaw_raw
                 if current_yaw > 90.0 and current_yaw < 180.0:

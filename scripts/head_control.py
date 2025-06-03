@@ -13,8 +13,8 @@ def main():
     stop_signal = threading.Event()
 
     control_thread = threading.Thread(
-        target=controller.run,
-        args=(controller.getHeadOrientationFromPico, stop_signal),
+        target=controller.run_thread,
+        args=(stop_signal,),
     )
     control_thread.start()
 
