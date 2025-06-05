@@ -39,12 +39,28 @@ from teleop_demo_python.utils.pico_client import PicoClient
 DEFAULT_DUAL_ARM_URDF_PATH = os.path.join(ASSET_PATH, "universal_robots_ur5e/dual_ur5e.urdf")
 DEFAULT_SCALE_FACTOR = 1.0
 
+DEFAULT_END_EFFECTOR_CONFIG = {
+    "left_arm": {
+        "link_name": "left_tool0",
+        "pose_source": "left_controller",
+        "control_trigger": "left_grip",
+        "gripper_trigger": "left_trigger",
+    },
+    "right_arm": {
+        "link_name": "right_tool0",
+        "pose_source": "right_controller",
+        "control_trigger": "right_grip",
+        "gripper_trigger": "right_trigger",
+    },
+}
+
 
 class DualArmURController:
     def __init__(
         self,
         pico_client: PicoClient,
         robot_urdf_path: str = DEFAULT_DUAL_ARM_URDF_PATH,  # Path to URDF for Placo
+        end_effector_config: dict = DEFAULT_END_EFFECTOR_CONFIG,
         left_robot_ip: str = LEFT_ROBOT_IP,
         right_robot_ip: str = RIGHT_ROBOT_IP,
         left_initial_joint_deg: np.ndarray = LEFT_INITIAL_JOINT_DEG,  # Use DEG for consistency
@@ -97,22 +113,7 @@ class DualArmURController:
         self.solver.add_kinetic_energy_regularization_task(1e-6)
 
         # Define end-effector configuration (adjust link names and pico sources as needed)
-        self.end_effector_config = {
-            "left_arm": {
-                "link_name": "left_tool0",
-                "pose_source": "left_controller",
-                "control_trigger": "left_grip",
-                "gripper_trigger": "left_trigger",
-                "vis_target": "left_target",
-            },
-            "right_arm": {
-                "link_name": "right_tool0",
-                "pose_source": "right_controller",
-                "control_trigger": "right_grip",
-                "gripper_trigger": "right_trigger",
-                "vis_target": "right_target",
-            },
-        }
+        self.end_effector_config = end_effector_config
 
         self.effector_task = {}
         self.init_ee_xyz = {}
@@ -157,7 +158,7 @@ class DualArmURController:
             for name, config in self.end_effector_config.items():
                 robot_frame_viz(self.placo_robot, config["link_name"])
                 frame_viz(
-                    config["vis_target"],
+                    f"vis_target_{name}",
                     self.effector_task[name].T_world_frame,
                 )
 
@@ -272,7 +273,7 @@ class DualArmURController:
                 for name, config in self.end_effector_config.items():
                     robot_frame_viz(self.placo_robot, config["link_name"])
                     frame_viz(
-                        f"target_{name}",
+                        f"vis_target_{name}",
                         self.effector_task[name].T_world_frame,
                     )
 

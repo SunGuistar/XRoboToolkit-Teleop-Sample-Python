@@ -49,9 +49,18 @@ The main dependencies are listed in the [`pyproject.toml`](pyproject.toml) file 
 To run the teleoperation demo with a UR5e robot in MuJoCo simulation:
 
 ```bash
-python scripts/teleop_dual_ur5e_mujoco.py
+python scripts/simulation/teleop_dual_ur5e_mujoco.py
 ```
-This script initializes the [`MujocoTeleopController`](teleop_demo_python/mujoco_teleop_controller.py) with the UR5e model and starts the teleoperation loop.
+This script initializes the [`MujocoTeleopController`](teleop_demo_python/simulation/mujoco_teleop_controller.py) with the UR5e model and starts the teleoperation loop.
+
+### Running the Placo Visualization Demo
+
+To run the teleoperation demo with a UR5e robot in Placo visualization:
+
+```bash
+python scripts/simulation/teleop_x7s_placo.py
+```
+This script initializes the [`PlacoTeleopController`](teleop_demo_python/simulation/placo_teleop_controller.py) with the X7S robot and starts the teleoperation loop.
 
 ### Running the Hardware Demo (Dual UR Arms and Dynamixel Head)
 
@@ -59,19 +68,19 @@ To run the teleoperation demo with the physical dual UR arms and Dynamixel-based
 
 1.  **Normal Operation:**
     ```bash
-    python scripts/teleop_dual_ur5e_hardware.py
+    python scripts/hardware/teleop_dual_ur5e_hardware.py
     ```
     This script initializes the [`DynamixelHeadController`](teleop_demo_python/hardware/dynamixel.py) and [`DualArmURController`](teleop_demo_python/hardware/ur.py) and starts the teleoperation loops for both head tracking and arm control.
 
 2.  **Resetting Arm Positions:**
     If you need to reset the UR arms to their initial/home positions and initialize the robotiq grippers, you can run the script with the `--reset` flag:
     ```bash
-    python scripts/teleop_dual_ur5e_hardware.py --reset
+    python scripts/hardware/teleop_dual_ur5e_hardware.py --reset
     ```
     This will execute the reset procedure defined in the [`DualArmURController`](teleop_demo_python/hardware/ur.py) and then exit.
 
 3.  **Visualizing IK results:**
     To visualize the inverse kinematics solution with placo during teleoperation, run the script with the `--visualize_placo` flag.
     ```bash
-    python scripts/teleop_dual_ur5e_hardware.py --visualize_placo
+    python scripts/hardware/teleop_dual_ur5e_hardware.py --visualize_placo
     ```
