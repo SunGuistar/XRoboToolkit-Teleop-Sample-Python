@@ -12,16 +12,14 @@ def main():
 
     config = {
         "right_hand": {
-            "link_name": "right_tool0",
+            "link_name": "right_gripper_link",
             "pose_source": "right_controller",
             "control_trigger": "right_grip",
-            "vis_target": "right_target",
         },
         "left_hand": {
-            "link_name": "left_tool0",
+            "link_name": "left_gripper_link",
             "pose_source": "left_controller",
             "control_trigger": "left_grip",
-            "vis_target": "left_target",
         },
     }
 
@@ -33,6 +31,11 @@ def main():
         scale_factor=1.5,
         visualize_placo=True,
     )
+
+    # additional constraints hardcoded here for now
+    joints_task = controller.solver.add_joints_task()
+    joints_task.set_joints({joint: 0.0 for joint in controller.placo_robot.joint_names()})
+    joints_task.configure("joints_regularization", "soft", 1e-4)
 
     controller.run()
 

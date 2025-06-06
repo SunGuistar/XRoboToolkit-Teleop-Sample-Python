@@ -12,7 +12,6 @@ from placo_utils.visualization import (
     robot_viz,
 )
 
-from teleop_demo_python.hardware.robotiq_gripper import calc_gripper_position
 from teleop_demo_python.hardware.ur import (
     CONTROLLER_DEADZONE,
     GRIPPER_FORCE,
@@ -33,6 +32,7 @@ from teleop_demo_python.utils.geometry import (
     apply_delta_pose,
     quat_diff_as_angle_axis,
 )
+from teleop_demo_python.utils.gripper_utils import calc_parallel_gripper_position
 from teleop_demo_python.utils.path_utils import ASSET_PATH
 from teleop_demo_python.utils.pico_client import PicoClient
 
@@ -215,16 +215,20 @@ class DualArmURController:
             active = xr_grip_val > (1.0 - CONTROLLER_DEADZONE)
             trigger_val = self.pico_client.get_key_value_by_name(config["gripper_trigger"])
             if arm_name == "left_arm":
-                self.left_gripper_pos = calc_gripper_position(
-                    self.left_controller.gripper.get_open_position(),
-                    self.left_controller.gripper.get_closed_position(),
-                    trigger_val,
+                self.left_gripper_pos = int(
+                    calc_parallel_gripper_position(
+                        self.left_controller.gripper.get_open_position(),
+                        self.left_controller.gripper.get_closed_position(),
+                        trigger_val,
+                    )
                 )
             elif arm_name == "right_arm":
-                self.right_gripper_pos = calc_gripper_position(
-                    self.right_controller.gripper.get_open_position(),
-                    self.right_controller.gripper.get_closed_position(),
-                    trigger_val,
+                self.right_gripper_pos = int(
+                    calc_parallel_gripper_position(
+                        self.right_controller.gripper.get_open_position(),
+                        self.right_controller.gripper.get_closed_position(),
+                        trigger_val,
+                    )
                 )
 
             if active:

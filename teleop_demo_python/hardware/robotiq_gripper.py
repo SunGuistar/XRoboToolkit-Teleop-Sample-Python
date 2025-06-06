@@ -310,18 +310,6 @@ class RobotiqGripper:
         return final_pos, RobotiqGripper.ObjectStatus(final_obj)
 
 
-def calc_gripper_position(min_pos: int, max_pos: int, percentage: float) -> int:
-    """Calculates the gripper position based on a percentage of the range between min and max positions.
-    :param min_pos: Minimum position of the gripper.
-    :param max_pos: Maximum position of the gripper.
-    :param percentage: Percentage of the range to calculate the position for (0.0 to 1.0).
-    :return: Calculated position as an integer.
-    """
-    if not (0.0 <= percentage <= 1.0):
-        raise ValueError("Percentage must be between 0.0 and 1.0.")
-    return int(min_pos + (max_pos - min_pos) * percentage)
-
-
 if __name__ == "__main__":
     ip = "192.168.50.195"
 
