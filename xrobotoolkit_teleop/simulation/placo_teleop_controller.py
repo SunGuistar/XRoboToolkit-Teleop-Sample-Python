@@ -11,12 +11,12 @@ from placo_utils.visualization import (
     robot_viz,
 )
 
-from teleop_demo_python.utils.geometry import (
+from xrobotoolkit_teleop.utils.geometry import (
     R_HEADSET_TO_WORLD,
     apply_delta_pose,
     quat_diff_as_angle_axis,
 )
-from teleop_demo_python.utils.pico_client import PicoClient
+from xrobotoolkit_teleop.utils.xr_client import XrClient
 
 
 class PlacoTeleopController:
@@ -63,7 +63,7 @@ class PlacoTeleopController:
         self.init_controller_xyz = {name: None for name in end_effector_config.keys()}
         self.init_controller_quat = {name: None for name in end_effector_config.keys()}
 
-        self.pico_client = PicoClient()
+        self.xr_client = XrClient()
         self._setup_placo()
 
     def _get_end_effector_info(self, ee_name):
@@ -135,7 +135,7 @@ class PlacoTeleopController:
                 self.t += self.dt
 
                 for name, config in self.end_effector_config.items():
-                    xr_grip = self.pico_client.get_key_value_by_name(config["control_trigger"])
+                    xr_grip = self.xr_client.get_key_value_by_name(config["control_trigger"])
                     active = xr_grip > 0.5
 
                     # Process current pose
@@ -146,7 +146,7 @@ class PlacoTeleopController:
                             )
                             print(f"{name} is activated.")
 
-                        xr_pose = self.pico_client.get_pose_by_name(config["pose_source"])
+                        xr_pose = self.xr_client.get_pose_by_name(config["pose_source"])
                         delta_xyz, delta_rot = self._process_xr_pose(xr_pose, name)
 
                         target_xyz, target_quat = apply_delta_pose(

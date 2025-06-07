@@ -1,14 +1,14 @@
 import threading
 import time
 
-from teleop_demo_python.hardware import DynamixelHeadController
-from teleop_demo_python.utils.pico_client import PicoClient
+from xrobotoolkit_teleop.hardware import DynamixelHeadController
+from xrobotoolkit_teleop.utils.xr_client import XrClient
 
 
 def main():
-    pico_client = PicoClient()
+    xr_client = XrClient()
 
-    controller = DynamixelHeadController(pico_client)
+    controller = DynamixelHeadController(xr_client)
 
     stop_signal = threading.Event()
 

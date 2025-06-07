@@ -1,9 +1,9 @@
 import os
 
-from teleop_demo_python.simulation.placo_teleop_controller import (
+from xrobotoolkit_teleop.simulation.placo_teleop_controller import (
     PlacoTeleopController,
 )
-from teleop_demo_python.utils.path_utils import ASSET_PATH
+from xrobotoolkit_teleop.utils.path_utils import ASSET_PATH
 
 
 def main():

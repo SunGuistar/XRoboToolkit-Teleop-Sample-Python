@@ -1,9 +1,9 @@
 import os
 
-from teleop_demo_python.simulation.mujoco_teleop_controller import (
+from xrobotoolkit_teleop.simulation.mujoco_teleop_controller import (
     MujocoTeleopController,
 )
-from teleop_demo_python.utils.path_utils import ASSET_PATH
+from xrobotoolkit_teleop.utils.path_utils import ASSET_PATH
 
 
 def main():

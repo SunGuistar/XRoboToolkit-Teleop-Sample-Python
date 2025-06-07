@@ -2,11 +2,11 @@ import argparse
 import threading
 import time
 
-from teleop_demo_python.hardware import (
+from xrobotoolkit_teleop.hardware import (
     DualArmURController,
     DynamixelHeadController,
 )
-from teleop_demo_python.utils.pico_client import PicoClient
+from xrobotoolkit_teleop.utils.xr_client import XrClient
 
 
 def main():
@@ -22,9 +22,9 @@ def main():
 
     args = parser.parse_args()
 
-    pico_client = PicoClient()
-    head_controller = DynamixelHeadController(pico_client)
-    arm_controller = DualArmURController(pico_client, visualize_placo=args.visualize_placo)
+    xr_client = XrClient()
+    head_controller = DynamixelHeadController(xr_client)
+    arm_controller = DualArmURController(xr_client, visualize_placo=args.visualize_placo)
 
     if args.reset:
         print("Reset flag detected. Running arm controller reset procedure...")

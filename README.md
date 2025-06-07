@@ -1,4 +1,4 @@
-# Teleop Demo Python
+# XRoboToolkit-Teleop-Sample-Python
 
 Pico teleoperation demo written in python for both mujoco simulation and robot hardware.
 
@@ -6,26 +6,18 @@ Pico teleoperation demo written in python for both mujoco simulation and robot h
 
 This project provides a framework for controlling robots in robot hardware and MuJoCo simulation through XR (VR/AR) input devices. It allows users to manipulate robot arms using natural hand movements captured through XR controllers.
 
-## Dependencies
-
-The main dependencies are listed in the [`pyproject.toml`](pyproject.toml) file and include:
--   `numpy`
--   `meshcat`
--   [`mujoco`](https://github.com/google-deepmind/mujoco)
--   [`placo`](https://github.com/rhoban/placo) (inverse kinematics library)
--   [`pyroboticsservice`](https://github.com/XR-Robotics/RoboticsService-Python) (Python binding for xr-robot sdk)
-
 ## Installation
+1. Download and install `XRoboToolkit PC Service`
 
-1.  **Clone the repository:**
+2.  **Clone the repository:**
     ```bash
-    git clone https://github.com/XR-Robotics/teleop_demo_python.git
-    cd teleop_demo_python
+    git clone https://github.com/XR-Robotics/XRoboToolkit-Teleop-Sample-Python.git
+    cd XRoboToolkit-Teleop-Sample-Python
     ```
 
-2.  **Installation**
+3.  **Installation**
     
-    The project includes a script to help set up a suitable Conda environment and install all dependencies.
+    It is recommended to setup a Conda environment and install the project using the included script.
     ```bash
     bash setup_conda.sh --conda <optional_env_name>
     conda activate <env_name>
@@ -37,11 +29,6 @@ The main dependencies are listed in the [`pyproject.toml`](pyproject.toml) file 
     bash setup.sh
     ```
 
-3. Download and install `roboticsservice`
-    ```bash
-    dpkg -i /path/to/roboticsservice_1.0.0.0_amd64.deb
-    ```
-
 ## Usage
 
 ### Running the MuJoCo Simulation Demo
@@ -51,7 +38,7 @@ To run the teleoperation demo with a UR5e robot in MuJoCo simulation:
 ```bash
 python scripts/simulation/teleop_dual_ur5e_mujoco.py
 ```
-This script initializes the [`MujocoTeleopController`](teleop_demo_python/simulation/mujoco_teleop_controller.py) with the UR5e model and starts the teleoperation loop.
+This script initializes the [`MujocoTeleopController`](xrobotoolkit_teleop/simulation/mujoco_teleop_controller.py) with the UR5e model and starts the teleoperation loop.
 
 ### Running the Placo Visualization Demo
 
@@ -60,7 +47,7 @@ To run the teleoperation demo with a UR5e robot in Placo visualization:
 ```bash
 python scripts/simulation/teleop_x7s_placo.py
 ```
-This script initializes the [`PlacoTeleopController`](teleop_demo_python/simulation/placo_teleop_controller.py) with the X7S robot and starts the teleoperation loop.
+This script initializes the [`PlacoTeleopController`](xrobotoolkit_teleop/simulation/placo_teleop_controller.py) with the X7S robot and starts the teleoperation loop.
 
 ### Running the Hardware Demo (Dual UR Arms and Dynamixel Head)
 
@@ -70,17 +57,29 @@ To run the teleoperation demo with the physical dual UR arms and Dynamixel-based
     ```bash
     python scripts/hardware/teleop_dual_ur5e_hardware.py
     ```
-    This script initializes the [`DynamixelHeadController`](teleop_demo_python/hardware/dynamixel.py) and [`DualArmURController`](teleop_demo_python/hardware/ur.py) and starts the teleoperation loops for both head tracking and arm control.
+    This script initializes the [`DynamixelHeadController`](xrobotoolkit_teleop/hardware/dynamixel.py) and [`DualArmURController`](xrobotoolkit_teleop/hardware/ur.py) and starts the teleoperation loops for both head tracking and arm control.
 
 2.  **Resetting Arm Positions:**
     If you need to reset the UR arms to their initial/home positions and initialize the robotiq grippers, you can run the script with the `--reset` flag:
     ```bash
     python scripts/hardware/teleop_dual_ur5e_hardware.py --reset
     ```
-    This will execute the reset procedure defined in the [`DualArmURController`](teleop_demo_python/hardware/ur.py) and then exit.
+    This will execute the reset procedure defined in the [`DualArmURController`](xrobotoolkit_teleop/hardware/ur.py) and then exit.
 
 3.  **Visualizing IK results:**
     To visualize the inverse kinematics solution with placo during teleoperation, run the script with the `--visualize_placo` flag.
     ```bash
     python scripts/hardware/teleop_dual_ur5e_hardware.py --visualize_placo
     ```
+
+## Dependencies
+XR Robotics dependencies:
+- [`xrobotookit_sdk`](https://github.com/XR-Robotics/XRoboToolkit-PC-Service-Pybind): Python binding for XRoboToolkit PC Service SDK, MIT License
+
+Robotics Simulation and Solver
+- [`mujoco`](https://github.com/google-deepmind/mujoco): robotics simulation, Apache 2.0 License
+- [`placo`](https://github.com/rhoban/placo): inverse kinematics, MIT License
+
+Hardware Control
+- [`dynamixel_sdk`](https://github.com/ROBOTIS-GIT/DynamixelSDK.git): Dynamixel control functions, Apache-2.0 License
+- [`ur_rtde`](https://gitlab.com/sdurobotics/ur_rtde): interface for controlling and receiving data from a UR robot, MIT License

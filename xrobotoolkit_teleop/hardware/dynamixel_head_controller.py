@@ -4,13 +4,13 @@ import time
 import meshcat.transformations as tf
 import numpy as np
 
-from teleop_demo_python.hardware.dynamixel import (
+from xrobotoolkit_teleop.hardware.dynamixel import (
     DEFAULT_BAUDRATE,
     DEFAULT_DEVICE_NAME,
     DYNAMIXEL_DEGREE_PER_UNIT,
     DynamixelController,
 )
-from teleop_demo_python.utils.pico_client import PicoClient
+from xrobotoolkit_teleop.utils.xr_client import XrClient
 
 
 class DynamixelHeadController:
@@ -18,7 +18,7 @@ class DynamixelHeadController:
 
     def __init__(
         self,
-        pico_client: PicoClient,
+        xr_client: XrClient,
         device_name: str = None,
         baudrate: int = None,
     ):
@@ -29,7 +29,7 @@ class DynamixelHeadController:
         self.PITCH_CENTER = 2753
 
         # Store dependencies
-        self.pico_client = pico_client
+        self.xr_client = xr_client
         self.tf = tf
 
         # Initialize the generic Dynamixel controller
@@ -88,7 +88,7 @@ class DynamixelHeadController:
         Returns a tuple (yaw, pitch) in degrees.
         """
         try:
-            head_pose = self.pico_client.get_pose_by_name("headset")
+            head_pose = self.xr_client.get_pose_by_name("headset")
             quat = np.array(
                 [head_pose[6], head_pose[3], head_pose[4], head_pose[5]]
             )  # [w, x, y, z]

@@ -12,7 +12,7 @@ from placo_utils.visualization import (
     robot_viz,
 )
 
-from teleop_demo_python.hardware.ur import (
+from xrobotoolkit_teleop.hardware.ur import (
     CONTROLLER_DEADZONE,
     GRIPPER_FORCE,
     GRIPPER_SPEED,
@@ -27,14 +27,14 @@ from teleop_demo_python.hardware.ur import (
     SERVO_TIME,
     URController,
 )
-from teleop_demo_python.utils.geometry import (
+from xrobotoolkit_teleop.utils.geometry import (
     R_HEADSET_TO_WORLD,
     apply_delta_pose,
     quat_diff_as_angle_axis,
 )
-from teleop_demo_python.utils.gripper_utils import calc_parallel_gripper_position
-from teleop_demo_python.utils.path_utils import ASSET_PATH
-from teleop_demo_python.utils.pico_client import PicoClient
+from xrobotoolkit_teleop.utils.gripper_utils import calc_parallel_gripper_position
+from xrobotoolkit_teleop.utils.path_utils import ASSET_PATH
+from xrobotoolkit_teleop.utils.xr_client import XrClient
 
 DEFAULT_DUAL_ARM_URDF_PATH = os.path.join(ASSET_PATH, "universal_robots_ur5e/dual_ur5e.urdf")
 DEFAULT_SCALE_FACTOR = 1.0
@@ -58,7 +58,7 @@ DEFAULT_END_EFFECTOR_CONFIG = {
 class DualArmURController:
     def __init__(
         self,
-        pico_client: PicoClient,
+        xr_client: XrClient,
         robot_urdf_path: str = DEFAULT_DUAL_ARM_URDF_PATH,  # Path to URDF for Placo
         end_effector_config: dict = DEFAULT_END_EFFECTOR_CONFIG,
         left_robot_ip: str = LEFT_ROBOT_IP,
@@ -76,7 +76,7 @@ class DualArmURController:
         scale_factor: float = DEFAULT_SCALE_FACTOR,
         visualize_placo: bool = True,  # Add placo visualization option
     ):
-        self.pico_client = pico_client
+        self.xr_client = xr_client
         self.robot_urdf_path = robot_urdf_path
         self.R_headset_world = R_headset_world
         self.scale_factor = scale_factor
@@ -211,9 +211,9 @@ class DualArmURController:
         self.placo_robot.update_kinematics()
 
         for arm_name, config in self.end_effector_config.items():
-            xr_grip_val = self.pico_client.get_key_value_by_name(config["control_trigger"])
+            xr_grip_val = self.xr_client.get_key_value_by_name(config["control_trigger"])
             active = xr_grip_val > (1.0 - CONTROLLER_DEADZONE)
-            trigger_val = self.pico_client.get_key_value_by_name(config["gripper_trigger"])
+            trigger_val = self.xr_client.get_key_value_by_name(config["gripper_trigger"])
             if arm_name == "left_arm":
                 self.left_gripper_pos = int(
                     calc_parallel_gripper_position(
@@ -242,7 +242,7 @@ class DualArmURController:
                         f"{arm_name} activated. Current EE xyz: {self.init_ee_xyz[arm_name]}, quat: {self.init_ee_quat[arm_name]}."
                     )
 
-                xr_pose = self.pico_client.get_pose_by_name(config["pose_source"])
+                xr_pose = self.xr_client.get_pose_by_name(config["pose_source"])
                 delta_xyz, delta_rot_angle_axis = self._process_xr_pose(xr_pose, arm_name)
 
                 target_xyz, target_quat = apply_delta_pose(

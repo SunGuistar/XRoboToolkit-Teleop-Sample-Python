@@ -1,10 +1,10 @@
-from teleop_demo_python.hardware import DualArmURController
-from teleop_demo_python.utils.pico_client import PicoClient
+from xrobotoolkit_teleop.hardware import DualArmURController
+from xrobotoolkit_teleop.utils.xr_client import XrClient
 
 
 def main():
-    pico_client = PicoClient()
-    controller = DualArmURController(pico_client)
+    xr_client = XrClient()
+    controller = DualArmURController(xr_client)
     controller.run()
 
 

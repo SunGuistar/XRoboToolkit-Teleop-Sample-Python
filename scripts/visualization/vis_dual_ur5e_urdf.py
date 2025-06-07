@@ -1,14 +1,15 @@
+import argparse
+
+import meshcat.transformations as tf
+import numpy as np
 import pinocchio
 import placo
-import argparse
-import meshcat.transformations as tf
 from placo_utils.visualization import (
-    robot_viz,
     robot_frame_viz,
+    robot_viz,
 )
-import numpy as np
 
-from teleop_demo_python.hardware.ur import (
+from xrobotoolkit_teleop.hardware.ur import (
     LEFT_INITIAL_JOINT,
     RIGHT_INITIAL_JOINT,
 )
