@@ -83,3 +83,6 @@ Robotics Simulation and Solver
 Hardware Control
 - [`dynamixel_sdk`](https://github.com/ROBOTIS-GIT/DynamixelSDK.git): Dynamixel control functions, Apache-2.0 License
 - [`ur_rtde`](https://gitlab.com/sdurobotics/ur_rtde): interface for controlling and receiving data from a UR robot, MIT License
+
+## License
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
