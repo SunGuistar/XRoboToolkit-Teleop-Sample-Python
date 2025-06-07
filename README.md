@@ -24,10 +24,14 @@ This project provides a framework for controlling robots in robot hardware and M
     bash setup_conda.sh --install
     ```
 
-    If installing on system python
+    If installing on system python (Ubuntu only):
     ```bash
     bash setup.sh
     ```
+
+    **Note:** The `setup_conda.sh` script is currently only supported on Ubuntu. For Windows users, please follow these steps:
+    1. Manually build the [`xrobotookit_sdk`](https://github.com/XR-Robotics/XRoboToolkit-PC-Service-Pybind).
+    2. Then, install this package using `pip install -e .` in your activated Conda environment or system Python.
 
 ## Usage
 

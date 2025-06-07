@@ -21,9 +21,6 @@ if [[ "$OS_NAME" == "Linux" ]]; then
             exit 1
         fi
     fi
-elif [[ "$OS_NAME" == "MINGW"* || "$OS_NAME" == "CYGWIN"* || "$OS_NAME" == "MSYS"* ]]; then
-    OS_VERSION="Windows"
-    echo "Windows detected"
 else
     echo "Unsupported operating system: $OS_NAME"
     exit 1
@@ -121,12 +118,7 @@ elif [[ "$1" == "--install" ]]; then
 
     git clone https://github.com/XR-Robotics/XRoboToolkit-PC-Service-Pybind.git
     cd XRoboToolkit-PC-Service-Pybind
-    if [[ "$OS_NAME" == "Linux" ]]; then
-        cp ../XRoboToolkit-PC-Service/RoboticsService/PXREARobotSDK/build/libPXREARobotSDK.so lib/ || { echo "Failed to copy libPXREARobotSDK.so"; exit 1; }
-    elif [[ "$OS_NAME" == "MINGW"* || "$OS_NAME" == "CYGWIN"* || "$OS_NAME" == "MSYS"* ]]; then
-        cp ../XRoboToolkit-PC-Service/RoboticsService/PXREARobotSDK/build/PXREARobotSDK.dll lib/ || { echo "Failed to copy PXREARobotSDK.dll"; exit 1; }
-        cp ../XRoboToolkit-PC-Service/RoboticsService/PXREARobotSDK/build/PXREARobotSDK.lib lib/ || { echo "Failed to copy PXREARobotSDK.lib"; exit 1; }
-    fi
+    cp ../XRoboToolkit-PC-Service/RoboticsService/PXREARobotSDK/build/libPXREARobotSDK.so lib/ || { echo "Failed to copy libPXREARobotSDK.so"; exit 1; }
     python setup.py install || { echo "Failed to install xrobotoolkit_sdk"; exit 1; }
     cd ..
     rm -rf XRoboToolkit-PC-Service
