@@ -7,7 +7,7 @@ Pico teleoperation demo written in python for both mujoco simulation and robot h
 This project provides a framework for controlling robots in robot hardware and MuJoCo simulation through XR (VR/AR) input devices. It allows users to manipulate robot arms using natural hand movements captured through XR controllers.
 
 ## Installation
-1. Download and install `XRoboToolkit PC Service`
+1. Download and install `XRoboToolkit PC Service` [todo: include .deb package link]
 
 2.  **Clone the repository:**
     ```bash
@@ -16,7 +16,7 @@ This project provides a framework for controlling robots in robot hardware and M
     ```
 
 3.  **Installation**
-    
+    **Note:** The setup scripts are currently only tested on Ubuntu 22.04.
     It is recommended to setup a Conda environment and install the project using the included script.
     ```bash
     bash setup_conda.sh --conda <optional_env_name>
@@ -24,14 +24,14 @@ This project provides a framework for controlling robots in robot hardware and M
     bash setup_conda.sh --install
     ```
 
-    If installing on system python (Ubuntu only):
+    If installing on system python:
     ```bash
     bash setup.sh
     ```
 
-    **Note:** The `setup_conda.sh` script is currently only supported on Ubuntu. For Windows users, please follow these steps:
+    <!-- **Note:** The `setup_conda.sh` script is currently only supported on Ubuntu. For Windows users, please follow these steps:
     1. Manually build the [`xrobotookit_sdk`](https://github.com/XR-Robotics/XRoboToolkit-PC-Service-Pybind).
-    2. Then, install this package using `pip install -e .` in your activated Conda environment or system Python.
+    2. Then, install this package using `pip install -e .` in your activated Conda environment or system Python. -->
 
 ## Usage
 

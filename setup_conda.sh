@@ -11,8 +11,8 @@ if [[ "$OS_NAME" == "Linux" ]]; then
         . /etc/os-release
         OS_VERSION=$VERSION_ID
     fi
-    if [[ "$OS_VERSION" != "22.04" && "$OS_VERSION" != "24.04" ]]; then
-        echo "Warning: This script has only been tested on Ubuntu 22.04 and 24.04."
+    if [[ "$OS_VERSION" != "22.04" ]]; then
+        echo "Warning: This script has only been tested on Ubuntu 22.04"
         echo "Your system is running Ubuntu $OS_VERSION."
         read -p "Do you want to continue anyway? (y/N): " -n 1 -r
         echo
@@ -103,27 +103,17 @@ elif [[ "$1" == "--install" ]]; then
         echo "Unsupported operating system: $OS_NAME"
         exit 1
     fi
-    export CC=/usr/bin/gcc
-    export CXX=/usr/bin/g++
-
 
     # Install the required packages
     rm -rf dependencies
     mkdir dependencies
     cd dependencies
-    git clone https://github.com/XR-Robotics/XRoboToolkit-PC-Service.git
-    cd XRoboToolkit-PC-Service/RoboticsService/PXREARobotSDK 
-    bash build.sh || { echo "Failed to build PXREARobotSDK"; exit 1; }
-    cd ../../..
 
     git clone https://github.com/XR-Robotics/XRoboToolkit-PC-Service-Pybind.git
     cd XRoboToolkit-PC-Service-Pybind
-    cp ../XRoboToolkit-PC-Service/RoboticsService/PXREARobotSDK/build/libPXREARobotSDK.so lib/ || { echo "Failed to copy libPXREARobotSDK.so"; exit 1; }
-    python setup.py install || { echo "Failed to install xrobotoolkit_sdk"; exit 1; }
-    cd ..
-    rm -rf XRoboToolkit-PC-Service
+    bash setup_ubuntu.sh
 
-    cd ..
+    cd ../..
 
     pip install -e . || { echo "Failed to install xrobotoolkit_teleop with pip"; exit 1; }
 

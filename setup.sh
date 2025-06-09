@@ -11,13 +11,16 @@ if [[ "$OS_NAME" == "Linux" ]]; then
         . /etc/os-release
         OS_VERSION=$VERSION_ID
     fi
-    if [[ "$OS_VERSION" != "22.04" && "$OS_VERSION" != "24.04" ]]; then
-        echo "This script only supports Ubuntu 22.04 or 24.04."
-        exit 1
+    if [[ "$OS_VERSION" != "22.04" ]]; then
+        echo "Warning: This script has only been tested on Ubuntu 22.04"
+        echo "Your system is running Ubuntu $OS_VERSION."
+        read -p "Do you want to continue anyway? (y/N): " -n 1 -r
+        echo
+        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+            echo "Installation cancelled."
+            exit 1
+        fi
     fi
-elif [[ "$OS_NAME" == "MINGW"* || "$OS_NAME" == "CYGWIN"* || "$OS_NAME" == "MSYS"* ]]; then
-    OS_VERSION="Windows"
-    echo "Windows detected"
 else
     echo "Unsupported operating system: $OS_NAME"
     exit 1
@@ -29,24 +32,12 @@ echo "Operating system check passed: $OS_NAME $OS_VERSION"
     rm -rf dependencies
     mkdir dependencies
     cd dependencies
-    git clone https://github.com/XR-Robotics/XRoboToolkit-PC-Service.git
-    cd XRoboToolkit-PC-Service/RoboticsService/PXREARobotSDK 
-    bash build.sh || { echo "Failed to build PXREARobotSDK"; exit 1; }
-    cd ../../..
 
     git clone https://github.com/XR-Robotics/XRoboToolkit-PC-Service-Pybind.git
     cd XRoboToolkit-PC-Service-Pybind
-    if [[ "$OS_NAME" == "Linux" ]]; then
-        cp ../XRoboToolkit-PC-Service/RoboticsService/PXREARobotSDK/build/libPXREARobotSDK.so lib/ || { echo "Failed to copy libPXREARobotSDK.so"; exit 1; }
-    elif [[ "$OS_NAME" == "MINGW"* || "$OS_NAME" == "CYGWIN"* || "$OS_NAME" == "MSYS"* ]]; then
-        cp ../XRoboToolkit-PC-Service/RoboticsService/PXREARobotSDK/build/PXREARobotSDK.dll lib/ || { echo "Failed to copy PXREARobotSDK.dll"; exit 1; }
-        cp ../XRoboToolkit-PC-Service/RoboticsService/PXREARobotSDK/build/PXREARobotSDK.lib lib/ || { echo "Failed to copy PXREARobotSDK.lib"; exit 1; }
-    fi
-    python setup.py install || { echo "Failed to install xrobotoolkit_sdk"; exit 1; }
-    cd ..
-    rm -rf XRoboToolkit-PC-Service
+    bash setup_ubuntu.sh
 
-    cd ..
+    cd ../..
 
     pip install -e . || { echo "Failed to install xrobotoolkit_teleop with pip"; exit 1; }
 
