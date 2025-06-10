@@ -8,7 +8,7 @@ from xrobotoolkit_teleop.utils.path_utils import ASSET_PATH
 
 def main():
     xml_path = os.path.join(ASSET_PATH, "galaxea/A1X/scene.xml")
-    robot_urdf_path = os.path.join(ASSET_PATH, "galaxea/A1X/dual_a1x.urdf")
+    robot_urdf_path = os.path.join(ASSET_PATH, "galaxea/A1X/dual_a1x_fixed_gripper.urdf")
 
     config = {
         "right_hand": {
@@ -43,7 +43,7 @@ def main():
         robot_urdf_path=robot_urdf_path,
         end_effector_config=config,
         scale_factor=1.5,
-        visualize_placo=False,
+        visualize_placo=True,
     )
 
     controller.run()

@@ -140,8 +140,7 @@ class MujocoTeleopController:
         # Print all joint names from placo model
         print("Joint names in the Placo model:")
         for joint_name in self.placo_robot.model.names:
-            if joint_name != "universe":  # Exclude the universe joint
-                print(f"  {joint_name}")
+            print(f"  {joint_name}")
 
         for name, config in self.end_effector_config.items():
             ee_xyz, ee_quat = self._get_end_effector_info(config["link_name"])
@@ -152,11 +151,20 @@ class MujocoTeleopController:
             manipulability = self.solver.add_manipulability_task(config["link_name"], "both", 1.0)
             manipulability.configure("manipulability", "soft", 5e-2)
 
-        if self.floating_base:
-            self.placo_robot.state.q = self.mj_data.qpos.copy()
-        else:
+        # if self.floating_base:
+        #     self.placo_robot.state.q = self.mj_data.qpos.copy()
+        # else:
+        #     self.solver.mask_fbase(True)
+        #     self.placo_robot.state.q[7:] = self.mj_data.qpos.copy()
+        if not self.floating_base:
             self.solver.mask_fbase(True)
-            self.placo_robot.state.q[7:] = self.mj_data.qpos.copy()
+
+        self.placo_robot.state.q = calc_placo_q_from_mujoco_qpos(
+            self.mj_model,
+            self.placo_robot,
+            self.mj_data.qpos.copy(),
+            floating_base=self.floating_base,
+        )
 
         if self.visualize_placo:
             self.placo_robot.update_kinematics()

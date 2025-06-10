@@ -22,7 +22,8 @@ def calc_mujoco_qpos_from_placo_q(
     """
     mujoco_qpos = np.zeros(mujoco_model.nq)
     if floating_base:
-        mujoco_qpos[:7] = placo_q[:7]  # Assuming the first 7 are for floating base
+        mujoco_qpos[:3] = placo_q[:3]
+        mujoco_qpos[3:7] = mujoco_quat_from_placo_quat(placo_q[3:7])
 
     placo_joint_names = [
         name for name in placo_robot.model.names if name != "root_joint" and name != "universe"
@@ -49,6 +50,7 @@ def calc_mujoco_qpos_from_placo_q(
 
 def calc_placo_q_from_mujoco_qpos(
     mujoco_model: mujoco.MjModel,
+    placo_robot: placo.RobotWrapper,
     mujoco_qpos: np.ndarray,
     floating_base: bool = False,
 ) -> np.ndarray:
@@ -62,21 +64,24 @@ def calc_placo_q_from_mujoco_qpos(
     Returns:
         np.ndarray: The corresponding Placo joint configuration.
     """
-    placo_q = np.zeros(len(mujoco_model.jnt_names) + 7)
+    placo_q = np.zeros(placo_robot.model.nq)
 
     if floating_base:
-        placo_q[:7] = mujoco_qpos[:7]  # Assuming the first 7 are for floating base
+        placo_q[:3] = mujoco_qpos[:3]  # Position (x, y, z)
+        placo_q[3:7] = placo_quat_from_mujoco_quat(mujoco_qpos[3:7])
     else:
-        placo_q[:7] = np.array([0, 0, 0, 1, 0, 0, 0])
+        placo_q[:7] = np.array([0, 0, 0, 0, 0, 0, 1])
 
-    for i, joint_name in enumerate(mujoco_model.jnt_names):
-        if joint_name == "root_joint" or joint_name == "universe":
-            continue
+    placo_joint_names = [
+        name for name in placo_robot.model.names if name != "root_joint" and name != "universe"
+    ]
+    placo_q_offset = 7
+    for i, joint_name in enumerate(placo_joint_names):
         mujoco_joint_id = mujoco.mj_name2id(mujoco_model, mujoco.mjtObj.mjOBJ_JOINT, joint_name)
         if mujoco_joint_id != -1:
             qpos_addr = mujoco_model.jnt_qposadr[mujoco_joint_id]
             if qpos_addr < len(mujoco_qpos):
-                placo_q[i + (7 if floating_base else 0)] = mujoco_qpos[qpos_addr]
+                placo_q[i + placo_q_offset] = mujoco_qpos[qpos_addr]
 
     return placo_q
 
@@ -129,3 +134,35 @@ def calc_mujoco_ctrl_from_qpos(mujoco_model: mujoco.MjModel, mujoco_qpos: np.nda
         mujoco_ctrl[i] = mujoco_qpos[qpos_addr]
 
     return mujoco_ctrl
+
+
+def placo_quat_from_mujoco_quat(mujoco_quat: np.ndarray) -> np.ndarray:
+    """
+    Convert a MuJoCo quaternion to a Placo quaternion.
+
+    Args:
+        mujoco_quat: The quaternion in MuJoCo format (w, x, y, z).
+
+    Returns:
+        np.ndarray: The corresponding Placo quaternion (x, y, z, w).
+    """
+    if len(mujoco_quat) != 4:
+        raise ValueError("MuJoCo quaternion must have 4 elements (w, x, y, z).")
+
+    return np.array([mujoco_quat[1], mujoco_quat[2], mujoco_quat[3], mujoco_quat[0]])
+
+
+def mujoco_quat_from_placo_quat(placo_quat: np.ndarray) -> np.ndarray:
+    """
+    Convert a Placo quaternion to a MuJoCo quaternion.
+
+    Args:
+        placo_quat: The quaternion in Placo format (x, y, z, w).
+
+    Returns:
+        np.ndarray: The corresponding MuJoCo quaternion (w, x, y, z).
+    """
+    if len(placo_quat) != 4:
+        raise ValueError("Placo quaternion must have 4 elements (x, y, z, w).")
+
+    return np.array([placo_quat[3], placo_quat[0], placo_quat[1], placo_quat[2]])
