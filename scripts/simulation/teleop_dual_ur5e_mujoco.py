@@ -12,14 +12,16 @@ def main():
 
     config = {
         "right_hand": {
-            "link_name": "right_gripper_link",
+            "link_name": "right_tool0",
             "pose_source": "right_controller",
             "control_trigger": "right_grip",
+            "vis_target": "right_target",
         },
         "left_hand": {
-            "link_name": "left_gripper_link",
+            "link_name": "left_tool0",
             "pose_source": "left_controller",
             "control_trigger": "left_grip",
+            "vis_target": "left_target",
         },
     }
 

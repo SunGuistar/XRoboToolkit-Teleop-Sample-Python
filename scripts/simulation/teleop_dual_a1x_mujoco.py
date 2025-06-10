@@ -7,7 +7,7 @@ from xrobotoolkit_teleop.utils.path_utils import ASSET_PATH
 
 
 def main():
-    xml_path = os.path.join(ASSET_PATH, "galaxea/A1X/dual_a1x.xml")
+    xml_path = os.path.join(ASSET_PATH, "galaxea/A1X/scene.xml")
     robot_urdf_path = os.path.join(ASSET_PATH, "galaxea/A1X/dual_a1x.urdf")
 
     config = {
@@ -15,11 +15,25 @@ def main():
             "link_name": "right_arm_link6",
             "pose_source": "right_controller",
             "control_trigger": "right_grip",
+            "vis_target": "right_target",
+            "gripper_config": {
+                "joint_name": "right_gripper_finger_joint1",
+                "gripper_trigger": "right_trigger",
+                "open_pos": 0.05,
+                "close_pos": 0.0,
+            },
         },
         "left_hand": {
             "link_name": "left_arm_link6",
             "pose_source": "left_controller",
             "control_trigger": "left_grip",
+            "vis_target": "left_target",
+            "gripper_config": {
+                "joint_name": "left_gripper_finger_joint1",
+                "gripper_trigger": "left_trigger",
+                "open_pos": 0.05,
+                "close_pos": 0.0,
+            },
         },
     }
 
@@ -29,7 +43,7 @@ def main():
         robot_urdf_path=robot_urdf_path,
         end_effector_config=config,
         scale_factor=1.5,
-        visualize_placo=True,
+        visualize_placo=False,
     )
 
     controller.run()
