@@ -7,7 +7,7 @@ Pico teleoperation demo written in python for both mujoco simulation and robot h
 This project provides a framework for controlling robots in robot hardware and MuJoCo simulation through XR (VR/AR) input devices. It allows users to manipulate robot arms using natural hand movements captured through XR controllers.
 
 ## Installation
-1. Download and install [XRoboToolkit PC Service](https://github.com/XR-Robotics/XRoboToolkit-PC-Service/releases/download/v1.0.0/XRoboToolkit-PC-Service_1.0.0_ubuntu_amd64.deb). Run the installed program before running the following demo.
+1. Download and install [XRoboToolkit PC Service](https://github.com/XR-Robotics/XRoboToolkit-PC-Service). Run the installed program before running the following demo.
 
 2.  **Clone the repository:**
     ```bash
