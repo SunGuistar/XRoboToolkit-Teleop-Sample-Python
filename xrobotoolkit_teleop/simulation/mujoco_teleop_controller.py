@@ -16,6 +16,15 @@ from xrobotoolkit_teleop.utils.geometry import (
     apply_delta_pose,
     quat_diff_as_angle_axis,
 )
+from xrobotoolkit_teleop.utils.gripper_utils import (
+    calc_parallel_gripper_position,
+)
+from xrobotoolkit_teleop.utils.mujoco_utils import (
+    calc_mujoco_ctrl_from_qpos,
+    calc_mujoco_qpos_from_placo_q,
+    calc_placo_q_from_mujoco_qpos,
+    set_mujoco_joint_pos_by_name,
+)
 from xrobotoolkit_teleop.utils.xr_client import XrClient
 
 
@@ -29,19 +38,20 @@ class MujocoTeleopController:
         R_headset_world=R_HEADSET_TO_WORLD,
         visualize_placo=False,
         scale_factor=1.0,
-        q_init=None,
+        mj_qpos_init=None,
     ):
         """
         Initialize the teleoperation controller.
 
         Args:
-            xml_path: Path to the MuJoCo XML scene file
-            robot_urdf_path: Path to the robot URDF file for IK solving
-            end_effector_config: Dictionary containing end effector configurations
-            floating_base: Whether the robot has a floating base
-            R_headset_world: Rotation matrix to transform headset coordinates to world coordinates
-            visualize_placo: Whether to visualize the placo IK solver
-            scale_factor: Scale factor for teleoperation
+            xml_path: Path to the MuJoCo XML scene file.
+            robot_urdf_path: Path to the robot URDF file for IK solving.
+            end_effector_config: Dictionary containing end effector configurations.
+            floating_base: Whether the robot has a floating base.
+            R_headset_world: Rotation matrix to transform headset coordinates to world coordinates.
+            visualize_placo: Whether to visualize the placo IK solver.
+            scale_factor: Scale factor for teleoperation.
+            mj_qpos_init: Initial joint configuration. If None, uses 'home' keyframe from MuJoCo model.
         """
         self.xml_path = xml_path
         self.robot_urdf_path = robot_urdf_path
@@ -50,8 +60,8 @@ class MujocoTeleopController:
         self.R_headset_world = R_headset_world
         self.visualize_placo = visualize_placo
         self.scale_factor = scale_factor
-        self.q_init = q_init
-        self.q_current = q_init
+        self.mj_qpos_init = mj_qpos_init
+        self.mj_qpos_curr = mj_qpos_init
 
         # To be initialized later
         self.mj_model = None
@@ -68,6 +78,11 @@ class MujocoTeleopController:
         self.init_ee_quat = {name: None for name in end_effector_config.keys()}
         self.init_controller_xyz = {name: None for name in end_effector_config.keys()}
         self.init_controller_quat = {name: None for name in end_effector_config.keys()}
+        self.gripper_pos_target = {}
+        for name, config in end_effector_config.items():
+            if "gripper_config" in config:
+                gripper_config = config["gripper_config"]
+                self.gripper_pos_target[gripper_config["joint_name"]] = gripper_config["open_pos"]
 
         self.xr_client = XrClient()
 
@@ -103,11 +118,11 @@ class MujocoTeleopController:
 
         # Set initial position from keyframe if available
         mujoco.mj_resetData(self.mj_model, self.mj_data)
-        if self.q_init is None:
+        if self.mj_qpos_init is None:
             mujoco.mj_resetDataKeyframe(self.mj_model, self.mj_data, self.mj_model.key("home").id)
         else:
-            self.mj_data.qpos[:] = self.q_init
-            self.mj_data.ctrl[:] = self.q_init
+            self.mj_data.qpos[:] = self.mj_qpos_init
+            self.mj_data.ctrl[:] = self.mj_qpos_init
             mujoco.mj_forward(self.mj_model, self.mj_data)
 
         # Calculate forward kinematics to get initial end effector pose
@@ -125,8 +140,7 @@ class MujocoTeleopController:
         # Print all joint names from placo model
         print("Joint names in the Placo model:")
         for joint_name in self.placo_robot.model.names:
-            if joint_name != "universe":  # Exclude the universe joint
-                print(f"  {joint_name}")
+            print(f"  {joint_name}")
 
         for name, config in self.end_effector_config.items():
             ee_xyz, ee_quat = self._get_end_effector_info(config["link_name"])
@@ -137,11 +151,20 @@ class MujocoTeleopController:
             manipulability = self.solver.add_manipulability_task(config["link_name"], "both", 1.0)
             manipulability.configure("manipulability", "soft", 5e-2)
 
-        if self.floating_base:
-            self.placo_robot.state.q = self.mj_data.qpos.copy()
-        else:
+        # if self.floating_base:
+        #     self.placo_robot.state.q = self.mj_data.qpos.copy()
+        # else:
+        #     self.solver.mask_fbase(True)
+        #     self.placo_robot.state.q[7:] = self.mj_data.qpos.copy()
+        if not self.floating_base:
             self.solver.mask_fbase(True)
-            self.placo_robot.state.q[7:] = self.mj_data.qpos.copy()
+
+        self.placo_robot.state.q = calc_placo_q_from_mujoco_qpos(
+            self.mj_model,
+            self.placo_robot,
+            self.mj_data.qpos.copy(),
+            floating_base=self.floating_base,
+        )
 
         if self.visualize_placo:
             self.placo_robot.update_kinematics()
@@ -225,6 +248,19 @@ class MujocoTeleopController:
                             self.init_controller_quat[name] = None
                             print(f"{name} is deactivated.")
 
+                    if "gripper_config" in config:
+                        gripper_config = config["gripper_config"]
+                        trigger_value = self.xr_client.get_key_value_by_name(
+                            gripper_config["gripper_trigger"]
+                        )
+                        gripper_pos = calc_parallel_gripper_position(
+                            gripper_config["open_pos"],
+                            gripper_config["close_pos"],
+                            trigger_value,
+                        )
+                        joint_name = gripper_config["joint_name"]
+                        self.gripper_pos_target[joint_name] = gripper_pos
+
                 self._update_kinematics()
 
                 # Step simulation and update viewer
@@ -275,11 +311,11 @@ class MujocoTeleopController:
         except RuntimeError as e:  # Catch RuntimeError
             if "QPError" in str(e) and "NaN in the QP solution" in str(e):
                 print(f"IK solver failed with QPError (NaN): {e}")
-                if self.floating_base:
-                    self.placo_robot.state.q = self.q_current
-                else:
-                    self.placo_robot.state.q[7:] = self.q_current
-                    self.placo_robot.state.q[:7] = np.array([0, 0, 0, 1, 0, 0, 0])
+                self.placo_robot.state.q = calc_placo_q_from_mujoco_qpos(
+                    self.mj_model,
+                    self.mj_data.qpos,
+                    floating_base=self.floating_base,
+                )
 
                 self.placo_robot.update_kinematics()
             else:
@@ -289,11 +325,24 @@ class MujocoTeleopController:
             print(f"An unexpected error occurred in IK solver: {e}")
             return
 
-        if self.floating_base:
-            self.q_current = self.placo_robot.state.q
-        else:
-            self.q_current = self.placo_robot.state.q[7:]
-        self.mj_data.ctrl = self.q_current
+        self.mj_qpos_curr = calc_mujoco_qpos_from_placo_q(
+            self.mj_model,
+            self.placo_robot,
+            self.placo_robot.state.q,
+            floating_base=self.floating_base,
+        )
+
+        for joint_name, gripper_pos in self.gripper_pos_target.items():
+            success = set_mujoco_joint_pos_by_name(
+                self.mj_model,
+                self.mj_qpos_curr,
+                joint_name,
+                gripper_pos,
+            )
+            if not success:
+                raise ValueError(f"Joint '{joint_name}' not found in MuJoCo model.")
+
+        self.mj_data.ctrl = calc_mujoco_ctrl_from_qpos(self.mj_model, self.mj_qpos_curr)
 
         if self.visualize_placo:
             self.placo_vis.display(self.placo_robot.state.q)
@@ -301,3 +350,15 @@ class MujocoTeleopController:
             for name, config in self.end_effector_config.items():
                 robot_frame_viz(self.placo_robot, config["link_name"])
                 frame_viz(f"vis_target_{name}", self.effector_task[name].T_world_frame)
+
+    def _set_gripper_position(self, joint_name, position):
+        """Set the gripper position in the MuJoCo model."""
+        joint_id = mujoco.mj_name2id(self.mj_model, mujoco.mjtObj.mjOBJ_JOINT, joint_name)
+        if joint_id == -1:
+            raise ValueError(f"Joint '{joint_name}' not found in the MuJoCo model.")
+
+        qpos_addr = self.mj_model.jnt_qposadr[joint_id]
+        if qpos_addr < len(self.mj_data.qpos):
+            self.mj_data.qpos[qpos_addr] = position
+        else:
+            raise IndexError(f"Qpos address {qpos_addr} is out of bounds for qpos array.")

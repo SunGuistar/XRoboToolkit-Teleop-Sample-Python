@@ -159,7 +159,7 @@
     <position name="left_arm_joint5" joint="left_arm_joint5" class="position_arm" ctrlrange="-1.5708 1.5708" />
     <position name="left_arm_joint6" joint="left_arm_joint6" class="position_arm" ctrlrange="-2.8798 2.8798" />
     <position name="left_gripper_finger_joint1" joint="left_gripper_finger_joint1" class="position_gripper" ctrlrange="0 0.05" />
-    <position name="left_gripper_finger_joint2" joint="left_gripper_finger_joint2" class="position_gripper" ctrlrange="-0.05 0" />
+    <!-- <position name="left_gripper_finger_joint2" joint="left_gripper_finger_joint2" class="position_gripper" ctrlrange="-0.05 0" /> -->
     <position name="right_arm_joint1" joint="right_arm_joint1" class="position_arm" ctrlrange="-2.8798 2.8798" />
     <position name="right_arm_joint2" joint="right_arm_joint2" class="position_arm" ctrlrange="0 3.1416" />
     <position name="right_arm_joint3" joint="right_arm_joint3" class="position_arm" ctrlrange="-3.3161 0" />
@@ -167,8 +167,13 @@
     <position name="right_arm_joint5" joint="right_arm_joint5" class="position_arm" ctrlrange="-1.5708 1.5708" />
     <position name="right_arm_joint6" joint="right_arm_joint6" class="position_arm" ctrlrange="-2.8798 2.8798" />
     <position name="right_gripper_finger_joint1" joint="right_gripper_finger_joint1" class="position_gripper" ctrlrange="0 0.05" />
-    <position name="right_gripper_finger_joint2" joint="right_gripper_finger_joint2" class="position_gripper" ctrlrange="-0.05 0" />
+    <!-- <position name="right_gripper_finger_joint2" joint="right_gripper_finger_joint2" class="position_gripper" ctrlrange="-0.05 0" /> -->
   </actuator>
+
+  <contact>
+    <exclude body1="right_gripper_finger_link1" body2="right_gripper_finger_link2" />
+    <exclude body1="left_gripper_finger_link1" body2="left_gripper_finger_link2" />
+  </contact>
 
   <equality>
     <joint name="right_gripper_constraint" joint1="right_gripper_finger_joint1" joint2="right_gripper_finger_joint2" polycoef="0 -1 0 0 0" />
@@ -197,9 +202,9 @@
     <actuatorpos name="left_gripper_finger_joint1_p" actuator="left_gripper_finger_joint1" />
     <actuatorvel name="left_gripper_finger_joint1_v" actuator="left_gripper_finger_joint1" />
     <actuatorfrc name="left_gripper_finger_joint1_f" actuator="left_gripper_finger_joint1" noise="0.001" />
-    <actuatorpos name="left_gripper_finger_joint2_p" actuator="left_gripper_finger_joint2" />
+    <!-- <actuatorpos name="left_gripper_finger_joint2_p" actuator="left_gripper_finger_joint2" />
     <actuatorvel name="left_gripper_finger_joint2_v" actuator="left_gripper_finger_joint2" />
-    <actuatorfrc name="left_gripper_finger_joint2_f" actuator="left_gripper_finger_joint2" noise="0.001" />
+    <actuatorfrc name="left_gripper_finger_joint2_f" actuator="left_gripper_finger_joint2" noise="0.001" /> -->
     <actuatorpos name="right_arm_joint1_p" actuator="right_arm_joint1" />
     <actuatorvel name="right_arm_joint1_v" actuator="right_arm_joint1" />
     <actuatorfrc name="right_arm_joint1_f" actuator="right_arm_joint1" noise="0.001" />
@@ -221,13 +226,13 @@
     <actuatorpos name="right_gripper_finger_joint1_p" actuator="right_gripper_finger_joint1" />
     <actuatorvel name="right_gripper_finger_joint1_v" actuator="right_gripper_finger_joint1" />
     <actuatorfrc name="right_gripper_finger_joint1_f" actuator="right_gripper_finger_joint1" noise="0.001" />
-    <actuatorpos name="right_gripper_finger_joint2_p" actuator="right_gripper_finger_joint2" />
+    <!-- <actuatorpos name="right_gripper_finger_joint2_p" actuator="right_gripper_finger_joint2" />
     <actuatorvel name="right_gripper_finger_joint2_v" actuator="right_gripper_finger_joint2" />
-    <actuatorfrc name="right_gripper_finger_joint2_f" actuator="right_gripper_finger_joint2" noise="0.001" />
+    <actuatorfrc name="right_gripper_finger_joint2_f" actuator="right_gripper_finger_joint2" noise="0.001" /> -->
     <framequat name="orientation" objtype="site" noise="0.001" objname="imu" />
     <gyro name="angular-velocity" site="imu" noise="0.005" cutoff="34.9" />
   </sensor>
   <keyframe>
-    <key name="home" qpos="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0" ctrl="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0" />
+    <key name="home" qpos="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0" ctrl="0 0 0 0 0 0 0 0 0 0 0 0 0 0" />
   </keyframe>
 </mujoco>
