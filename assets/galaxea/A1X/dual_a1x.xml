@@ -12,7 +12,7 @@
       <geom material="visualgeom" condim="1" contype="0" conaffinity="0" />
     </default>
     <default class="position_arm">
-      <position kp="5000" kv="50" />
+      <position kp="5000" kv="100" />
     </default>
     <default class="position_gripper">
       <position kp="1000" kv="10" />

@@ -34,6 +34,7 @@ This project provides a framework for controlling robots in robot hardware and M
     2. Then, install this package using `pip install -e .` in your activated Conda environment or system Python. -->
 
 ## Usage
+Use the following instructions to run example scripts. For a more detailed description, please refer to [`teleop_details.md`](teleop_details.md).
 
 ### Running the MuJoCo Simulation Demo
 
