@@ -54,7 +54,7 @@ python scripts/simulation/teleop_x7s_placo.py
 ```
 This script initializes the [`PlacoTeleopController`](xrobotoolkit_teleop/simulation/placo_teleop_controller.py) with the X7S robot and starts the teleoperation loop.
 
-### Running the Hardware Demo (Dual UR Arms and Dynamixel Head)
+### Running the Hardware Demo (Dual UR5 Arms and Dynamixel-based Head)
 
 To run the teleoperation demo with the physical dual UR arms and Dynamixel-based head:
 
