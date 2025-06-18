@@ -22,7 +22,7 @@ class A1XController:
         self.q_des = None
         self.v_des = [0.0] * 6
         self.kp = [2000, 2000, 1000, 200, 200, 200]
-        self.kd = [200.0, 200.0, 200, 100, 100, 100]
+        self.kd = [200.0, 500.0, 500, 200, 200, 200]
         self.t_ff = [0.0] * 6
         self.arm_ctrl_msg = motor_control()
 
