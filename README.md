@@ -77,6 +77,15 @@ To run the teleoperation demo with the physical dual UR arms and Dynamixel-based
     python scripts/hardware/teleop_dual_ur5e_hardware.py --visualize_placo
     ```
 
+### Running Galaxea A1X arm
+To run the teleoperation demo with a Galaxea A1X arm, follow the [instruction](https://docs.galaxea-ai.com/zh/Guide/A1XY/A1XY_Startup_Demo_Guide/) to setup the ROS environment. In two command line windows, run the following scripts.
+```bash
+roslaunch HDAS A1XY.launch
+```
+```bash
+python scripts/hardware/teleop_a1x_hardware.py
+```
+
 ## Dependencies
 XR Robotics dependencies:
 - [`xrobotookit_sdk`](https://github.com/XR-Robotics/XRoboToolkit-PC-Service-Pybind): Python binding for XRoboToolkit PC Service SDK, MIT License
@@ -88,6 +97,7 @@ Robotics Simulation and Solver
 Hardware Control
 - [`dynamixel_sdk`](https://github.com/ROBOTIS-GIT/DynamixelSDK.git): Dynamixel control functions, Apache-2.0 License
 - [`ur_rtde`](https://gitlab.com/sdurobotics/ur_rtde): interface for controlling and receiving data from a UR robot, MIT License
+- [`Galaxea A1XY`](https://docs.galaxea-ai.com/zh/Guide/A1XY/A1XY_Software_Introduction/#_8): Ros Noetic package for controlling A1XY manipulators
 
 ## License
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
