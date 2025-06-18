@@ -19,6 +19,7 @@ dependencies = [
     "placo==0.9.4",
     "ur_rtde",
     "dynamixel-sdk",
+    "rospkg",
 ]
 
 [project.optional-dependencies]
