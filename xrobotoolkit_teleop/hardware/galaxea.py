@@ -19,23 +19,14 @@ class A1XController:
         self.timestamp = 0.0
 
         # motor control parameters
-        self.q_des = None  # Desired joint positions
-        self.v_des = [0.0] * 6  # Desired joint velocities
-        self.kp = [2000, 2000, 1000, 100, 100, 100]
-        self.kd = [500.0, 500.0, 500, 100, 100, 100]
+        self.q_des = None
+        self.v_des = [0.0] * 6
+        self.kp = [2000, 2000, 1000, 200, 200, 200]
+        self.kd = [200.0, 200.0, 200, 100, 100, 100]
         self.t_ff = [0.0] * 6
-        # self.kd = [5000.0, 5000.0, 5000.0, 1000.0, 1000.0, 1000.0]
         self.arm_ctrl_msg = motor_control()
-        # self.joint_names = [
-        #     "arm_joint_1",
-        #     "arm_joint_2",
-        #     "arm_joint_3",
-        #     "arm_joint_4",
-        #     "arm_joint_5",
-        #     "arm_joint_6",
-        # ]
 
-        self.q_des_gripper = [-2]
+        self.q_des_gripper = [-2.1]
         self.v_des_gripper = [0.0]
         self.kp_gripper = [1]
         self.kd_gripper = [0.05]
@@ -46,15 +37,15 @@ class A1XController:
         """
         Callback function to handle joint state updates.
         """
-        self.qpos = msg.position[:6]  # Assuming first 6 are arm joints
-        self.qvel = msg.velocity[:6]  # Assuming first 6 are arm joints
+        self.qpos = msg.position[:6]
+        self.qvel = msg.velocity[:6]
         self.qpos_gripper = [msg.position[6]]
         self.qvel_gripper = [msg.velocity[6]]
         if self.q_des is None:
             self.q_des = self.qpos
         self.timestamp = msg.header.stamp.to_sec()
-        print(f"Received joint state: {self.qpos}, {self.qvel} at time {self.timestamp}")
-        print(f"Gripper state: {self.qpos_gripper}, {self.qvel_gripper}")
+        # print(f"Received joint state: {self.qpos}, {self.qvel} at time {self.timestamp}")
+        # print(f"Gripper state: {self.qpos_gripper}, {self.qvel_gripper}")
 
     def publish_arm_control(self):
         """
@@ -63,9 +54,9 @@ class A1XController:
         if self.q_des is None:
             return
 
-        self.arm_ctrl_msg.header = Header()  # Create a new Header instance
+        self.arm_ctrl_msg.header = Header()
         self.arm_ctrl_msg.header.stamp = rospy.Time.now()
-        self.arm_ctrl_msg.header.frame_id = "base_link"  # Or your relevant frame
+        self.arm_ctrl_msg.header.frame_id = "base_link"
         self.arm_ctrl_msg.kp = self.kp
         self.arm_ctrl_msg.kd = self.kd
         self.arm_ctrl_msg.t_ff = self.t_ff
@@ -91,19 +82,5 @@ class A1XController:
         Main loop to run the controller.
         """
         while not rospy.is_shutdown():
-            # Example: Publish current joint positions and velocities
             self.publish_motor_control()
-            # Sleep to maintain the loop rate
             self.rate.sleep()
-
-
-def main():
-    controller = A1XController()
-    try:
-        controller.run()
-    except rospy.ROSInterruptException:
-        pass
-
-
-if __name__ == "__main__":
-    main()
