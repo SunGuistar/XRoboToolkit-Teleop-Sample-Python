@@ -74,5 +74,17 @@ class XrClient:
         """Returns the current timestamp in nanoseconds (int)."""
         return xrt.get_time_stamp_ns()
 
+    def get_hand_tracking_state(self, hand: str) -> np.ndarray:
+        """Returns the hand tracking state for the specified hand.
+        Valid hands: "left", "right".
+        State is a 27 x 7 numpy array, where each row is [x, y, z, qx, qy, qz, qw] for each joint.
+        """
+        if hand.lower() == "left":
+            return xrt.get_left_hand_tracking_state()
+        elif hand.lower() == "right":
+            return xrt.get_right_hand_tracking_state()
+        else:
+            raise ValueError(f"Invalid hand: {hand}. Valid hands are: 'left', 'right'.")
+
     def close(self):
         xrt.close()
