@@ -312,7 +312,7 @@ def estimate_frame_from_hand_points(keypoint_3d_array: np.ndarray) -> np.ndarray
 
     # Gram–Schmidt Orthonormalize
     x = x_vector - np.sum(x_vector * normal) * normal
-    x = x / np.linalg.norm(x)
+    x = x / (np.linalg.norm(x) + 1e-6)
     z = np.cross(x, normal)
 
     # We assume that the vector from pinky to index is similar the z axis in MANO convention
