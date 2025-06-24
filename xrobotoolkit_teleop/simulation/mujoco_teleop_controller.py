@@ -16,14 +16,14 @@ from xrobotoolkit_teleop.utils.geometry import (
     apply_delta_pose,
     quat_diff_as_angle_axis,
 )
-from xrobotoolkit_teleop.utils.gripper_utils import (
-    calc_parallel_gripper_position,
-)
 from xrobotoolkit_teleop.utils.mujoco_utils import (
     calc_mujoco_ctrl_from_qpos,
     calc_mujoco_qpos_from_placo_q,
     calc_placo_q_from_mujoco_qpos,
     set_mujoco_joint_pos_by_name,
+)
+from xrobotoolkit_teleop.utils.parallel_gripper_utils import (
+    calc_parallel_gripper_position,
 )
 from xrobotoolkit_teleop.utils.xr_client import XrClient
 
@@ -178,9 +178,7 @@ class MujocoTeleopController:
         """Find and set up the mocap target body."""
         for name, config in self.end_effector_config.items():
             if "vis_target" not in config:
-                print(
-                    f"Warning: 'vis_target' not found in config for {name}. Skipping mocap setup."
-                )
+                print(f"Warning: 'vis_target' not found in config for {name}. Skipping mocap setup.")
                 continue
             vis_target = config["vis_target"]
             mocap_id = mujoco.mj_name2id(self.mj_model, mujoco.mjtObj.mjOBJ_BODY, vis_target)
@@ -215,8 +213,8 @@ class MujocoTeleopController:
                     # Process current pose
                     if active:
                         if self.init_ee_xyz[name] is None:
-                            self.init_ee_xyz[name], self.init_ee_quat[name] = (
-                                self._get_end_effector_info(config["link_name"])
+                            self.init_ee_xyz[name], self.init_ee_quat[name] = self._get_end_effector_info(
+                                config["link_name"]
                             )
                             print(f"{name} is activated.")
                         xr_pose = self.xr_client.get_pose_by_name(config["pose_source"])
@@ -250,9 +248,7 @@ class MujocoTeleopController:
 
                     if "gripper_config" in config:
                         gripper_config = config["gripper_config"]
-                        trigger_value = self.xr_client.get_key_value_by_name(
-                            gripper_config["gripper_trigger"]
-                        )
+                        trigger_value = self.xr_client.get_key_value_by_name(gripper_config["gripper_trigger"])
                         gripper_pos = calc_parallel_gripper_position(
                             gripper_config["open_pos"],
                             gripper_config["close_pos"],
@@ -298,9 +294,7 @@ class MujocoTeleopController:
         else:
             # Calculate relative transformation from init pose
             delta_xyz = (controller_xyz - self.init_controller_xyz[src_name]) * self.scale_factor
-            delta_rot = quat_diff_as_angle_axis(
-                self.init_controller_quat[src_name], controller_quat
-            )
+            delta_rot = quat_diff_as_angle_axis(self.init_controller_quat[src_name], controller_quat)
 
         return delta_xyz, delta_rot
 
