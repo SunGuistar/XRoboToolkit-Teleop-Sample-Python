@@ -29,10 +29,6 @@ This project provides a framework for controlling robots in robot hardware and M
     bash setup.sh
     ```
 
-    <!-- **Note:** The `setup_conda.sh` script is currently only supported on Ubuntu. For Windows users, please follow these steps:
-    1. Manually build the [`xrobotookit_sdk`](https://github.com/XR-Robotics/XRoboToolkit-PC-Service-Pybind).
-    2. Then, install this package using `pip install -e .` in your activated Conda environment or system Python. -->
-
 ## Usage
 Use the following instructions to run example scripts. For a more detailed description, please refer to [`teleop_details.md`](teleop_details.md).
 
@@ -53,6 +49,17 @@ To run the teleoperation demo with a UR5e robot in Placo visualization:
 python scripts/simulation/teleop_x7s_placo.py
 ```
 This script initializes the [`PlacoTeleopController`](xrobotoolkit_teleop/simulation/placo_teleop_controller.py) with the X7S robot and starts the teleoperation loop.
+
+### Running Dexterous Hand Teleop Simulation
+- Shadow hand simulation in Mujoco
+    ```bash
+    python scripts/simulation/teleop_shadow_hand_mujoco.py
+    ```
+
+- Inspire hand in Placo Visualization
+    ```bash
+    scripts/simulation/teleop_inspire_hand_placo.py
+    ```
 
 ### Running the Hardware Demo (Dual UR5 Arms and Dynamixel-based Head)
 

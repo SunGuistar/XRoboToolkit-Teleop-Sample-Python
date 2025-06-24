@@ -20,6 +20,7 @@ dependencies = [
     "ur_rtde",
     "dynamixel-sdk",
     "rospkg",
+    "dex_retargeting"
 ]
 
 [project.optional-dependencies]
