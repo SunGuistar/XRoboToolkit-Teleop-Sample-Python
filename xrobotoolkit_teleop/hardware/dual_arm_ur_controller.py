@@ -32,7 +32,7 @@ from xrobotoolkit_teleop.utils.geometry import (
     apply_delta_pose,
     quat_diff_as_angle_axis,
 )
-from xrobotoolkit_teleop.utils.gripper_utils import calc_parallel_gripper_position
+from xrobotoolkit_teleop.utils.parallel_gripper_utils import calc_parallel_gripper_position
 from xrobotoolkit_teleop.utils.path_utils import ASSET_PATH
 from xrobotoolkit_teleop.utils.xr_client import XrClient
 
@@ -192,9 +192,7 @@ class DualArmURController:
             delta_rot = np.array([0.0, 0.0, 0.0])  # Angle-axis
         else:
             delta_xyz = (controller_xyz - self.init_controller_xyz[arm_name]) * self.scale_factor
-            delta_rot = quat_diff_as_angle_axis(
-                self.init_controller_quat[arm_name], controller_quat
-            )
+            delta_rot = quat_diff_as_angle_axis(self.init_controller_quat[arm_name], controller_quat)
         return delta_xyz, delta_rot
 
     def calc_target_joint_position(self):
@@ -284,9 +282,7 @@ class DualArmURController:
         except RuntimeError as e:
             print(f"IK solver failed: {e}. Returning last known good joint positions.")
         except Exception as e:
-            print(
-                f"An unexpected error occurred in IK: {e}. Returning last known good joint positions."
-            )
+            print(f"An unexpected error occurred in IK: {e}. Returning last known good joint positions.")
 
     def reset(self):
         self.left_controller.reset()
