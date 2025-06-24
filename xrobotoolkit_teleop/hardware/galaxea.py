@@ -5,11 +5,16 @@ from std_msgs.msg import Header  # For the header field
 
 
 class A1XController:
-    def __init__(self, rate_hz=100):
-        rospy.init_node("a1x_controller")
-        self.pub = rospy.Publisher("/motion_control/control_arm", motor_control, queue_size=1)
-        self.gripper_pub = rospy.Publisher("/motion_control/control_gripper", motor_control, queue_size=1)
-        self.sub = rospy.Subscriber("/hdas/feedback_arm", JointState, self.arm_state_callback)
+    def __init__(
+        self,
+        arm_control_topic: str = "/motion_control/control_arm",
+        gripper_control_topic: str = "/motion_control/control_gripper",
+        arm_state_topic: str = "/hdas/feedback_arm",
+        rate_hz: float = 100,
+    ):
+        self.pub = rospy.Publisher(arm_control_topic, motor_control, queue_size=1)
+        self.gripper_pub = rospy.Publisher(gripper_control_topic, motor_control, queue_size=1)
+        self.sub = rospy.Subscriber(arm_state_topic, JointState, self.arm_state_callback)
         self.rate = rospy.Rate(rate_hz)
 
         self.qpos = [0.0] * 6
