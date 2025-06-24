@@ -96,14 +96,6 @@ elif [[ "$1" == "--install" ]]; then
     fi
     pip install --upgrade pip
 
-    if [[ "$OS_NAME" == "Linux" ]]; then
-        # install compilation tools on conda
-        conda install -c conda-forge gcc gxx cmake make -y
-    else
-        echo "Unsupported operating system: $OS_NAME"
-        exit 1
-    fi
-
     # Install the required packages
     rm -rf dependencies
     mkdir dependencies
