@@ -14,9 +14,11 @@ from placo_utils.visualization import (
 
 from xrobotoolkit_teleop.common.xr_client import XrClient
 from xrobotoolkit_teleop.utils.geometry import (
-    R_HEADSET_TO_WORLD,
     apply_delta_pose,
     quat_diff_as_angle_axis,
+)
+from xrobotoolkit_teleop.utils.parallel_gripper_utils import (
+    calc_parallel_gripper_position,
 )
 
 
@@ -25,11 +27,11 @@ class BaseTeleopController(abc.ABC):
         self,
         robot_urdf_path: str,
         end_effector_config: Dict[str, Dict[str, Any]],
-        floating_base=False,
-        R_headset_world=R_HEADSET_TO_WORLD,
-        scale_factor=1.0,
-        q_init=None,
-        dt=0.01,
+        floating_base: bool,
+        R_headset_world: np.ndarray,
+        scale_factor: float,
+        q_init: np.ndarray,
+        dt: float,
     ):
         self.robot_urdf_path = robot_urdf_path
         self.end_effector_config = end_effector_config
@@ -47,14 +49,19 @@ class BaseTeleopController(abc.ABC):
         self.ref_controller_quat = {name: None for name in end_effector_config.keys()}
         self.effector_task = {}
         self.active = {}
+        self.gripper_pos_target = {}
+        for name, config in end_effector_config.items():
+            if "gripper_config" in config:
+                gripper_config = config["gripper_config"]
+                self.gripper_pos_target[name] = {
+                    joint_name: joint_pos
+                    for joint_name, joint_pos in zip(gripper_config["joint_names"], gripper_config["open_pos"])
+                }
 
         self._stop_event = threading.Event()
 
-        # placo setup
-        self._placo_setup()
-
-        # robot setup
         self._robot_setup()
+        self._placo_setup()
 
     def _process_xr_pose(self, xr_pose, src_name):
         """Process the current XR controller pose."""
@@ -78,14 +85,12 @@ class BaseTeleopController(abc.ABC):
         )
 
         if self.ref_controller_xyz[src_name] is None:
-            # First time processing the pose
             self.ref_controller_xyz[src_name] = controller_xyz
             self.ref_controller_quat[src_name] = controller_quat
 
             delta_xyz = np.zeros(3)
             delta_rot = np.array([0.0, 0.0, 0.0])
         else:
-            # Calculate relative transformation from init pose
             delta_xyz = (controller_xyz - self.ref_controller_xyz[src_name]) * self.scale_factor
             delta_rot = quat_diff_as_angle_axis(self.ref_controller_quat[src_name], controller_quat)
 
@@ -94,6 +99,10 @@ class BaseTeleopController(abc.ABC):
     def _placo_setup(self):
         """Set up the placo inverse kinematics solver."""
         self.placo_robot = placo.RobotWrapper(self.robot_urdf_path)
+        print("Joint names in the Placo model:")
+        for joint_name in self.placo_robot.model.names:
+            print(f"  {joint_name}")
+
         self.solver = placo.KinematicsSolver(self.placo_robot)
         self.solver.dt = self.dt
         self.solver.add_kinetic_energy_regularization_task(1e-6)
@@ -106,26 +115,17 @@ class BaseTeleopController(abc.ABC):
                 self.solver.mask_fbase(True)
                 self.placo_robot.state.q[7:] = self.q_init.copy()
         else:
-            # Use default configuration
             if not self.floating_base:
                 self.solver.mask_fbase(True)
-                self.placo_robot.state.q[:7] = np.array([0, 0, 0, 0, 0, 0, 1])  # Identity quaternion for base
+            self.placo_robot.state.q[:7] = np.array([0, 0, 0, 0, 0, 0, 1])  # Identity quaternion for base
 
-        # Print all joint names from placo model
-        print("Joint names in the Placo model:")
-        for joint_name in self.placo_robot.model.names:
-            if joint_name != "universe":  # Exclude the universe joint
-                print(f"  {joint_name}")
-
-        # Update kinematics with initial configuration
         self.placo_robot.update_kinematics()
 
         # Set up end effector tasks
         for name, config in self.end_effector_config.items():
-            # ee_xyz, ee_quat = self._get_end_effector_info(config["link_name"])
-            # ee_target = tf.quaternion_matrix(ee_quat)
-            # ee_target[:3, 3] = ee_xyz
-            ee_target = np.eye(4)
+            ee_xyz, ee_quat = self._get_link_pose(config["link_name"])
+            ee_target = tf.quaternion_matrix(ee_quat)
+            ee_target[:3, 3] = ee_xyz
             self.effector_task[name] = self.solver.add_frame_task(config["link_name"], ee_target)
             self.effector_task[name].configure(name, "soft", 1.0)
             manipulability = self.solver.add_manipulability_task(config["link_name"], "both", 1.0)
@@ -148,10 +148,7 @@ class BaseTeleopController(abc.ABC):
             if self.active[src_name]:
                 if self.ref_ee_xyz[src_name] is None:
                     print(f"{src_name} is activated.")
-                    self.ref_ee_xyz[src_name] = self.placo_robot.get_T_world_frame(config["link_name"])[:3, 3]
-                    self.ref_ee_quat[src_name] = tf.quaternion_from_matrix(
-                        self.placo_robot.get_T_world_frame(config["link_name"])
-                    )
+                    self.ref_ee_xyz[src_name], self.ref_ee_quat[src_name] = self._get_link_pose(config["link_name"])
 
                 xr_pose = self.xr_client.get_pose_by_name(config["pose_source"])
                 delta_xyz, delta_rot = self._process_xr_pose(xr_pose, src_name)
@@ -166,7 +163,6 @@ class BaseTeleopController(abc.ABC):
                     print(f"{src_name} is deactivated.")
                     self.ref_ee_xyz[src_name] = None
                     self.ref_controller_xyz[src_name] = None
-                self.effector_task[src_name].T_world_frame = self.placo_robot.get_T_world_frame(config["link_name"])
 
         try:
             self.solver.solve(True)
@@ -186,6 +182,29 @@ class BaseTeleopController(abc.ABC):
         for name, config in self.end_effector_config.items():
             robot_frame_viz(self.placo_robot, config["link_name"])
             frame_viz(f"vis_target_{name}", self.effector_task[name].T_world_frame)
+
+    def _update_gripper_target(self):
+        for gripper_name in self.end_effector_config.keys():
+            if "gripper_config" not in self.end_effector_config[gripper_name]:
+                continue
+
+            gripper_config = self.end_effector_config[gripper_name]["gripper_config"]
+            gripper_config = self.end_effector_config[gripper_name]["gripper_config"]
+            gripper_type = gripper_config["type"]
+            if gripper_type == "parallel":
+                trigger_value = self.xr_client.get_key_value_by_name(gripper_config["gripper_trigger"])
+                for joint_name, open_pos, close_pos in zip(
+                    gripper_config["joint_names"],
+                    gripper_config["open_pos"],
+                    gripper_config["close_pos"],
+                ):
+                    # Calculate the target position based on the trigger value
+                    gripper_pos = calc_parallel_gripper_position(open_pos, close_pos, trigger_value)
+                    self.gripper_pos_target[gripper_name][joint_name] = gripper_pos
+                    self.gripper_pos_target[gripper_name][joint_name] = gripper_pos
+            else:
+                # TODO: add dexterous hand support
+                raise ValueError(f"Unsupported gripper type: {gripper_type}")
 
     # ---------------------------------------------------------
     # --- Abstract Methods (to be implemented by subclasses) ---
@@ -209,6 +228,11 @@ class BaseTeleopController(abc.ABC):
     @abc.abstractmethod
     def _send_command(self):
         """Sends the calculated target joint positions from self.placo_robot.state.q to the robot/sim."""
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def _get_link_pose(self, link_name):
+        """Gets the current world pose for a given link name."""
         raise NotImplementedError
 
     @abc.abstractmethod

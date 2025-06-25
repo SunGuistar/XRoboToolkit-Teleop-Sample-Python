@@ -1,6 +1,8 @@
 import time
 from typing import Any, Dict
 
+import meshcat.transformations as tf
+
 from xrobotoolkit_teleop.common.base_teleop_controller import BaseTeleopController
 from xrobotoolkit_teleop.utils.geometry import (
     R_HEADSET_TO_WORLD,
@@ -34,12 +36,10 @@ class PlacoTeleopController(BaseTeleopController):
             q_init,
             dt,
         )
+        self._init_placo_viz()
 
     def _robot_setup(self):
-        """
-        In this case the robot is a visualization of the Placo robot.
-        """
-        self._init_placo_viz()
+        pass
 
     def _send_command(self):
         self._update_placo_viz()
@@ -49,6 +49,11 @@ class PlacoTeleopController(BaseTeleopController):
 
     def _update_robot_state(self):
         pass
+
+    def _get_link_pose(self, link_name):
+        link_xyz = self.placo_robot.get_T_world_frame(link_name)[:3, 3]
+        link_quat = tf.quaternion_from_matrix(self.placo_robot.get_T_world_frame(link_name))
+        return link_xyz, link_quat
 
     def run(self):
         """

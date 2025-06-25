@@ -17,10 +17,11 @@ def main():
             "control_trigger": "right_grip",
             "vis_target": "right_target",
             "gripper_config": {
-                "joint_name": "right_gripper_finger_joint1",
+                "type": "parallel",
                 "gripper_trigger": "right_trigger",
-                "open_pos": 0.05,
-                "close_pos": 0.0,
+                "joint_names": ["right_gripper_finger_joint1",],
+                "open_pos": [0.05,],
+                "close_pos": [0.0,],
             },
         },
         "left_hand": {
@@ -29,10 +30,11 @@ def main():
             "control_trigger": "left_grip",
             "vis_target": "left_target",
             "gripper_config": {
-                "joint_name": "left_gripper_finger_joint1",
+                "type": "parallel",
                 "gripper_trigger": "left_trigger",
-                "open_pos": 0.05,
-                "close_pos": 0.0,
+                "joint_names": ["left_gripper_finger_joint1",],
+                "open_pos": [0.05,],
+                "close_pos": [0.0,],
             },
         },
     }
