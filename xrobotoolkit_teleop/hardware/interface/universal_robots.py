@@ -2,7 +2,7 @@ import numpy as np
 import rtde_control
 import rtde_receive
 
-from xrobotoolkit_teleop.hardware.robotiq_gripper import RobotiqGripper
+from xrobotoolkit_teleop.hardware.interface.robotiq_gripper import RobotiqGripper
 
 LEFT_ROBOT_IP = "192.168.50.55"
 RIGHT_ROBOT_IP = "192.168.50.195"

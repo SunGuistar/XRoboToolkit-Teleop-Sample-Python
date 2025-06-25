@@ -5,7 +5,7 @@ import meshcat.transformations as tf
 import numpy as np
 
 from xrobotoolkit_teleop.common.xr_client import XrClient
-from xrobotoolkit_teleop.hardware.dynamixel import (
+from xrobotoolkit_teleop.hardware.interface.dynamixel import (
     DEFAULT_BAUDRATE,
     DEFAULT_DEVICE_NAME,
     DYNAMIXEL_DEGREE_PER_UNIT,

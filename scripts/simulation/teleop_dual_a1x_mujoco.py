@@ -19,9 +19,15 @@ def main():
             "gripper_config": {
                 "type": "parallel",
                 "gripper_trigger": "right_trigger",
-                "joint_names": ["right_gripper_finger_joint1",],
-                "open_pos": [0.05,],
-                "close_pos": [0.0,],
+                "joint_names": [
+                    "right_gripper_finger_joint1",
+                ],
+                "open_pos": [
+                    0.05,
+                ],
+                "close_pos": [
+                    0.0,
+                ],
             },
         },
         "left_hand": {
@@ -32,9 +38,15 @@ def main():
             "gripper_config": {
                 "type": "parallel",
                 "gripper_trigger": "left_trigger",
-                "joint_names": ["left_gripper_finger_joint1",],
-                "open_pos": [0.05,],
-                "close_pos": [0.0,],
+                "joint_names": [
+                    "left_gripper_finger_joint1",
+                ],
+                "open_pos": [
+                    0.05,
+                ],
+                "close_pos": [
+                    0.0,
+                ],
             },
         },
     }

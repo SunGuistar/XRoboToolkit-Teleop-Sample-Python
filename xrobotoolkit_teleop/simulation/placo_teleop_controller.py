@@ -44,9 +44,6 @@ class PlacoTeleopController(BaseTeleopController):
     def _send_command(self):
         self._update_placo_viz()
 
-    def _cleanup(self):
-        pass
-
     def _update_robot_state(self):
         pass
 

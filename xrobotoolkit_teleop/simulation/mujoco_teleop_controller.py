@@ -89,9 +89,6 @@ class MujocoTeleopController(BaseTeleopController):
 
             print(f"Mocap ID for '{vis_target}' body: {self.target_mocap_idx[name]}")
 
-    def _cleanup(self):
-        pass
-
     def _send_command(self):
         qpos_desired = calc_mujoco_qpos_from_placo_q(
             self.mj_model,

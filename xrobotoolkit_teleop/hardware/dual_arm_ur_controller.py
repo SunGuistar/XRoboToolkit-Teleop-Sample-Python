@@ -13,7 +13,7 @@ from placo_utils.visualization import (
 )
 
 from xrobotoolkit_teleop.common.xr_client import XrClient
-from xrobotoolkit_teleop.hardware.ur import (
+from xrobotoolkit_teleop.hardware.interface.universal_robots import (
     CONTROLLER_DEADZONE,
     GRIPPER_FORCE,
     GRIPPER_SPEED,

@@ -1,39 +1,17 @@
-import threading
-
-import rospy
-
-from xrobotoolkit_teleop.common.xr_client import XrClient
-from xrobotoolkit_teleop.hardware.galaxea_teleop_controller import GalaxeaA1XTeleopController
+from xrobotoolkit_teleop.hardware.galaxea_teleop_controller import (
+    DEFAULT_END_EFFECTOR_CONFIG,
+    DEFAULT_SINGLE_A1X_URDF_PATH,
+    GalaxeaA1XTeleopController,
+)
 
 
 def main():
-    xr_client = XrClient()
-    controller = GalaxeaA1XTeleopController(xr_client=xr_client)
-
-    stop_event = threading.Event()
-    rospy.on_shutdown(lambda: stop_event.set())
-    left_arm_thread = threading.Thread(
-        target=controller.run_control_thread,
-        args=(stop_event,),
+    controller = GalaxeaA1XTeleopController(
+        robot_urdf_path=DEFAULT_SINGLE_A1X_URDF_PATH,
+        end_effector_config=DEFAULT_END_EFFECTOR_CONFIG,
+        scale_factor=1.5,
     )
-
-    ik_thread = threading.Thread(
-        target=controller.run_ik_thread,
-        args=(stop_event,),
-    )
-
-    left_arm_thread.start()
-    ik_thread.start()
-
-    try:
-        rospy.spin()
-    except KeyboardInterrupt:
-        print("Keyboard interrupt received, shutting down...")
-    finally:
-        stop_event.set()
-
-    left_arm_thread.join()
-    ik_thread.join()
+    controller.run()
 
 
 if __name__ == "__main__":

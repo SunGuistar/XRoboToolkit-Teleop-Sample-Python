@@ -1,22 +1,16 @@
 import os
 import threading
-import time
-import webbrowser
+from typing import Dict
 
 import meshcat.transformations as tf
 import numpy as np
-import placo
 import rospy
-from placo_utils.visualization import frame_viz, robot_frame_viz, robot_viz
 
-from xrobotoolkit_teleop.common.xr_client import XrClient
-from xrobotoolkit_teleop.hardware.galaxea import A1XController
+from xrobotoolkit_teleop.common.base_teleop_controller import BaseTeleopController
+from xrobotoolkit_teleop.hardware.interface.galaxea import A1XController
 from xrobotoolkit_teleop.utils.geometry import (
     R_HEADSET_TO_WORLD,
-    apply_delta_pose,
-    quat_diff_as_angle_axis,
 )
-from xrobotoolkit_teleop.utils.parallel_gripper_utils import calc_parallel_gripper_position
 from xrobotoolkit_teleop.utils.path_utils import ASSET_PATH
 
 # Default paths and configurations for a single right arm
@@ -27,222 +21,69 @@ CONTROLLER_DEADZONE = 0.1
 
 # Default end-effector configuration for a single right arm without a gripper
 DEFAULT_END_EFFECTOR_CONFIG = {
-    "right_arm": {
+    "left_arm": {
         "link_name": "gripper_link",  # URDF link name for the single arm
         "pose_source": "right_controller",
         "control_trigger": "right_grip",
         "gripper_config": {
-            "joint_name": "right_gripper_finger_joint1",
+            "type": "parallel",
             "gripper_trigger": "right_trigger",
-            "open_pos": -2.0,
-            "close_pos": 0.0,
+            "joint_names": [
+                "right_gripper_finger_joint1",
+            ],
+            "open_pos": [
+                -2.0,
+            ],
+            "close_pos": [
+                0.0,
+            ],
         },
     },
 }
 
 DEFAULT_DUAL_END_EFFECTOR_CONFIG = {
     "right_arm": {
-        "link_name": "right_gripper_link",  # URDF link name for the single arm
+        "link_name": "right_gripper_link",
         "pose_source": "right_controller",
         "control_trigger": "right_grip",
         "gripper_config": {
-            "joint_name": "right_gripper_finger_joint1",
+            "type": "parallel",
             "gripper_trigger": "right_trigger",
-            "open_pos": -2.0,
-            "close_pos": 0.0,
+            "joint_names": [
+                "right_gripper_finger_joint1",
+            ],
+            "open_pos": [
+                -2.0,
+            ],
+            "close_pos": [
+                0.0,
+            ],
         },
     },
     "left_arm": {
-        "link_name": "left_gripper_link",  # URDF link name for the single arm
+        "link_name": "left_gripper_link",
         "pose_source": "left_controller",
         "control_trigger": "left_grip",
         "gripper_config": {
-            "joint_name": "left_gripper_finger_joint1",
+            "type": "parallel",
             "gripper_trigger": "left_trigger",
-            "open_pos": -2.0,
-            "close_pos": 0.0,
+            "joint_names": [
+                "left_gripper_finger_joint1",
+            ],
+            "open_pos": [
+                -2.0,
+            ],
+            "close_pos": [
+                0.0,
+            ],
         },
     },
 }
 
 
-class GalaxeaA1XTeleopController:
+class GalaxeaA1XTeleopController(BaseTeleopController):
     def __init__(
         self,
-        xr_client: XrClient,
-        robot_urdf_path: str = DEFAULT_SINGLE_A1X_URDF_PATH,
-        end_effector_config: dict = DEFAULT_END_EFFECTOR_CONFIG,
-        R_headset_world: np.ndarray = R_HEADSET_TO_WORLD,
-        scale_factor: float = DEFAULT_SCALE_FACTOR,
-        visualize_placo: bool = True,
-        ros_rate_hz: int = 100,
-    ):
-
-        self.xr_client = xr_client
-        self.robot_urdf_path = robot_urdf_path
-        self.R_headset_world = R_headset_world
-        self.scale_factor = scale_factor
-        self.visualize_placo = visualize_placo
-        self.end_effector_config = end_effector_config
-
-        rospy.init_node("galaxea_teleop_controller", anonymous=True)
-        self.right_controller = A1XController(
-            arm_control_topic="/motion_control/control_arm",
-            gripper_control_topic="/motion_control/control_gripper",
-            arm_state_topic="/hdas/feedback_arm",
-            rate_hz=ros_rate_hz,
-        )
-
-        self.placo_robot = placo.RobotWrapper(self.robot_urdf_path)
-        self.solver = placo.KinematicsSolver(self.placo_robot)
-        self.solver.dt = 1.0 / ros_rate_hz
-        self.solver.mask_fbase(True)
-        self.solver.add_kinetic_energy_regularization_task(1e-6)
-
-        self.effector_task = {}
-        self.init_ee_xyz = {}
-        self.init_ee_quat = {}
-        self.init_controller_xyz = {}
-        self.init_controller_quat = {}
-        for name, config in self.end_effector_config.items():
-            self.effector_task[name] = self.solver.add_frame_task(config["link_name"], np.eye(4))
-            self.effector_task[name].configure(f"{name}_frame", "soft", 1.0)
-            self.solver.add_manipulability_task(config["link_name"], "both", 1.0).configure(
-                f"{name}_manipulability", "soft", 5e-2
-            )
-            self.init_ee_xyz[name] = None
-            self.init_ee_quat[name] = None
-            self.init_controller_xyz[name] = None
-            self.init_controller_quat[name] = None
-
-        self.gripper_pos_target = {}
-        for name, config in end_effector_config.items():
-            if "gripper_config" in config:
-                gripper_config = config["gripper_config"]
-                self.gripper_pos_target[gripper_config["joint_name"]] = gripper_config["open_pos"]
-
-        print("Waiting for initial joint state from the Galaxea arm...")
-        while not rospy.is_shutdown() and self.right_controller.timestamp == 0:
-            rospy.sleep(0.1)
-        print("Initial joint state received.")
-
-        self.placo_robot.state.q[7:13] = self.right_controller.qpos
-
-        if self.visualize_placo:
-            self.placo_robot.update_kinematics()
-            self.placo_vis = robot_viz(self.placo_robot)
-            time.sleep(0.5)
-            webbrowser.open(self.placo_vis.viewer.url())
-            self.placo_vis.display(self.placo_robot.state.q)
-            for name, config in self.end_effector_config.items():
-                robot_frame_viz(self.placo_robot, config["link_name"])
-                frame_viz(f"vis_target_{name}", self.effector_task[name].T_world_frame)
-
-    def _process_xr_pose(self, xr_pose, arm_name: str):
-        controller_xyz = np.array([xr_pose[0], xr_pose[1], xr_pose[2]])
-        controller_quat = np.array([xr_pose[6], xr_pose[3], xr_pose[4], xr_pose[5]])
-
-        controller_xyz = self.R_headset_world @ controller_xyz
-        R_transform = np.eye(4)
-        R_transform[:3, :3] = self.R_headset_world
-        R_quat = tf.quaternion_from_matrix(R_transform)
-        controller_quat = tf.quaternion_multiply(
-            tf.quaternion_multiply(R_quat, controller_quat), tf.quaternion_conjugate(R_quat)
-        )
-
-        if self.init_controller_xyz[arm_name] is None:
-            self.init_controller_xyz[arm_name] = controller_xyz.copy()
-            self.init_controller_quat[arm_name] = controller_quat.copy()
-            delta_xyz = np.zeros(3)
-            delta_rot = np.array([0.0, 0.0, 0.0])
-        else:
-            delta_xyz = (controller_xyz - self.init_controller_xyz[arm_name]) * self.scale_factor
-            delta_rot = quat_diff_as_angle_axis(self.init_controller_quat[arm_name], controller_quat)
-        return delta_xyz, delta_rot
-
-    def update_ik(self):
-        self.placo_robot.state.q[7:13] = self.right_controller.qpos
-        self.placo_robot.update_kinematics()
-
-        for arm_name, config in self.end_effector_config.items():
-            xr_grip_val = self.xr_client.get_key_value_by_name(config["control_trigger"])
-            active = xr_grip_val > (1.0 - CONTROLLER_DEADZONE)
-
-            if active:
-                if self.init_ee_xyz[arm_name] is None:
-                    self.init_ee_xyz[arm_name] = self.placo_robot.get_T_world_frame(config["link_name"])[:3, 3]
-                    self.init_ee_quat[arm_name] = tf.quaternion_from_matrix(
-                        self.placo_robot.get_T_world_frame(config["link_name"])
-                    )
-                    print(f"{arm_name} activated.")
-
-                xr_pose = self.xr_client.get_pose_by_name(config["pose_source"])
-                delta_xyz, delta_rot = self._process_xr_pose(xr_pose, arm_name)
-                target_xyz, target_quat = apply_delta_pose(
-                    self.init_ee_xyz[arm_name], self.init_ee_quat[arm_name], delta_xyz, delta_rot
-                )
-                target_pose = tf.quaternion_matrix(target_quat)
-                target_pose[:3, 3] = target_xyz
-                self.effector_task[arm_name].T_world_frame = target_pose
-
-                try:
-                    self.solver.solve(True)
-                    self.right_controller.q_des = self.placo_robot.state.q[7:13].copy()
-
-                    if self.visualize_placo:
-                        self.placo_vis.display(self.placo_robot.state.q)
-                        for name in self.end_effector_config:
-                            frame_viz(f"vis_target_{name}", self.effector_task[name].T_world_frame)
-                except RuntimeError as e:
-                    print(f"IK solver failed: {e}")
-                except Exception as e:
-                    print(f"An unexpected error occurred in IK: {e}")
-
-            else:
-                if self.init_ee_xyz[arm_name] is not None:
-                    self.init_ee_xyz[arm_name] = None
-                    self.init_controller_xyz[arm_name] = None
-                    print(f"{arm_name} deactivated.")
-                self.effector_task[arm_name].T_world_frame = self.placo_robot.get_T_world_frame(config["link_name"])
-
-            # Update gripper position based on XR input
-            if "gripper_config" in config:
-                gripper_config = config["gripper_config"]
-                trigger_value = self.xr_client.get_key_value_by_name(gripper_config["gripper_trigger"])
-                gripper_pos = calc_parallel_gripper_position(
-                    gripper_config["open_pos"],
-                    gripper_config["close_pos"],
-                    trigger_value,
-                )
-                joint_name = gripper_config["joint_name"]
-                self.gripper_pos_target[joint_name] = [gripper_pos]
-
-        self.right_controller.q_des_gripper = self.gripper_pos_target[
-            self.end_effector_config["right_arm"]["gripper_config"]["joint_name"]
-        ]
-
-    def run_ik_thread(self, stop_event: threading.Event):
-        print("Starting Galaxea A1X single arm teleop controller IK loop...")
-        while not (rospy.is_shutdown() or stop_event.is_set()):
-            start = time.time()
-            self.update_ik()
-            elapsed = time.time() - start
-            time.sleep(max(0, (self.solver.dt - elapsed)))
-        print("Galaxea teleop controller IK loop shutting down.")
-
-    def run_control_thread(self, stop_event: threading.Event):
-        print("Starting Galaxea A1X single arm teleop controller loop...")
-        while not (rospy.is_shutdown() or stop_event.is_set()):
-            self.right_controller.publish_arm_control()
-            self.right_controller.publish_gripper_control()
-            self.right_controller.rate.sleep()
-        print("Galaxea teleop controller shutting down.")
-
-
-class GalaxeaDualA1XTeleopController:
-    def __init__(
-        self,
-        xr_client: XrClient,
         robot_urdf_path: str = DEFAULT_DUAL_A1X_URDF_PATH,
         end_effector_config: dict = DEFAULT_DUAL_END_EFFECTOR_CONFIG,
         R_headset_world: np.ndarray = R_HEADSET_TO_WORLD,
@@ -250,191 +91,126 @@ class GalaxeaDualA1XTeleopController:
         visualize_placo: bool = True,
         ros_rate_hz: int = 100,
     ):
+        super().__init__(
+            robot_urdf_path=robot_urdf_path,
+            end_effector_config=end_effector_config,
+            floating_base=False,  # Galaxea A1X does not have a floating base
+            R_headset_world=R_headset_world,
+            scale_factor=scale_factor,
+            q_init=None,  # No initial joint position needed for Galaxea
+            dt=1.0 / ros_rate_hz,
+        )
 
-        self.xr_client = xr_client
-        self.robot_urdf_path = robot_urdf_path
-        self.R_headset_world = R_headset_world
-        self.scale_factor = scale_factor
+        self.ros_rate_hz = ros_rate_hz
         self.visualize_placo = visualize_placo
-        self.end_effector_config = end_effector_config
+        if self.visualize_placo:
+            self._init_placo_viz()
 
+    def _placo_setup(self):
+        super()._placo_setup()
+        for arm_name, config in self.end_effector_config.items():
+            ee_link_name = config["link_name"]
+            arm_prefix = ee_link_name.replace("gripper_link", "")
+            arm_joint_names = [f"{arm_prefix}arm_joint{i}" for i in range(1, 7)]
+            self.placo_arm_joint_slice[arm_name] = slice(
+                self.placo_robot.get_joint_offset(arm_joint_names[0]),
+                self.placo_robot.get_joint_offset(arm_joint_names[-1]) + 1,
+            )
+
+    def _robot_setup(self):
         rospy.init_node("galaxea_teleop_controller", anonymous=True)
 
-        self.left_controller = A1XController(
-            arm_control_topic="/motion_control/control_arm_left",
-            gripper_control_topic="/motion_control/control_gripper_left",
-            arm_state_topic="/hdas/feedback_arm_left",
-            rate_hz=ros_rate_hz,
-        )
+        self.arm_controllers: Dict[str, A1XController] = {}
+        self.placo_arm_joint_slice: Dict[str, slice] = {}
 
-        self.right_controller = A1XController(
-            arm_control_topic="/motion_control/control_arm_right",
-            gripper_control_topic="/motion_control/control_gripper_right",
-            arm_state_topic="/hdas/feedback_arm_right",
-            rate_hz=ros_rate_hz,
-        )
-
-        self.placo_robot = placo.RobotWrapper(self.robot_urdf_path)
-        self.solver = placo.KinematicsSolver(self.placo_robot)
-        self.solver.dt = 1.0 / ros_rate_hz
-        self.solver.mask_fbase(True)
-        self.solver.add_kinetic_energy_regularization_task(1e-6)
-
-        self.effector_task = {}
-        self.init_ee_xyz = {}
-        self.init_ee_quat = {}
-        self.init_controller_xyz = {}
-        self.init_controller_quat = {}
-        self.arm_active = {}
-        for name, config in self.end_effector_config.items():
-            self.effector_task[name] = self.solver.add_frame_task(config["link_name"], np.eye(4))
-            self.effector_task[name].configure(f"{name}_frame", "soft", 1.0)
-            self.solver.add_manipulability_task(config["link_name"], "both", 1.0).configure(
-                f"{name}_manipulability", "soft", 5e-2
+        for arm_name, config in self.end_effector_config.items():
+            arm_prefix = arm_name.replace("_arm", "")
+            controller = A1XController(
+                arm_control_topic=f"/motion_control/control_arm_{arm_prefix}",
+                gripper_control_topic=f"/motion_control/control_gripper_{arm_prefix}",
+                arm_state_topic=f"/hdas/feedback_arm_{arm_prefix}",
+                rate_hz=1.0 / self.dt,
             )
-            self.init_ee_xyz[name] = None
-            self.init_ee_quat[name] = None
-            self.init_controller_xyz[name] = None
-            self.init_controller_quat[name] = None
-            self.arm_active[name] = False
+            self.arm_controllers[arm_name] = controller
 
-        self.gripper_pos_target = {}
-        for name, config in end_effector_config.items():
-            if "gripper_config" in config:
-                gripper_config = config["gripper_config"]
-                self.gripper_pos_target[gripper_config["joint_name"]] = gripper_config["open_pos"]
-
-        print("Waiting for initial joint state from the Galaxea arm...")
-        while not rospy.is_shutdown() and self.right_controller.timestamp == 0:
+        # Wait for all controllers to receive their first joint state
+        print("Waiting for initial joint states from Galaxea arms...")
+        all_controllers_ready = False
+        while not rospy.is_shutdown() and not all_controllers_ready:
+            all_controllers_ready = all(controller.timestamp > 0 for controller in self.arm_controllers.values())
             rospy.sleep(0.1)
-        print("Initial joint state received.")
+        print("All controllers received initial state.")
 
-        self.placo_robot.state.q[7:13] = self.left_controller.qpos
-        self.placo_robot.state.q[15:21] = self.right_controller.qpos
+    def _update_robot_state(self):
+        """Reads current joint states from all hardware controllers and updates Placo."""
+        for arm_name, controller in self.arm_controllers.items():
+            self.placo_robot.state.q[self.placo_arm_joint_slice[arm_name]] = controller.qpos
 
-        if self.visualize_placo:
-            self.placo_robot.update_kinematics()
-            self.placo_vis = robot_viz(self.placo_robot)
-            time.sleep(0.5)
-            webbrowser.open(self.placo_vis.viewer.url())
-            self.placo_vis.display(self.placo_robot.state.q)
-            for name, config in self.end_effector_config.items():
-                robot_frame_viz(self.placo_robot, config["link_name"])
-                frame_viz(f"vis_target_{name}", self.effector_task[name].T_world_frame)
+    def _send_command(self):
+        """Sends the solved joint targets to the hardware controllers."""
+        for arm_name, controller in self.arm_controllers.items():
+            # Only send arm commands if the arm is active to prevent unwanted motion
+            if self.active.get(arm_name, False):
+                controller.q_des = self.placo_robot.state.q[self.placo_arm_joint_slice[arm_name]].copy()
 
-    def _process_xr_pose(self, xr_pose, arm_name: str):
-        controller_xyz = np.array([xr_pose[0], xr_pose[1], xr_pose[2]])
-        controller_quat = np.array([xr_pose[6], xr_pose[3], xr_pose[4], xr_pose[5]])
+            # Always send gripper commands
+            if "gripper_config" in self.end_effector_config[arm_name]:
+                controller.q_des_gripper = [
+                    self.gripper_pos_target[arm_name][gripper_joint]
+                    for gripper_joint in self.gripper_pos_target[arm_name].keys()
+                ]
 
-        controller_xyz = self.R_headset_world @ controller_xyz
-        R_transform = np.eye(4)
-        R_transform[:3, :3] = self.R_headset_world
-        R_quat = tf.quaternion_from_matrix(R_transform)
-        controller_quat = tf.quaternion_multiply(
-            tf.quaternion_multiply(R_quat, controller_quat), tf.quaternion_conjugate(R_quat)
-        )
+            controller.publish_arm_control()
+            controller.publish_gripper_control()
 
-        if self.init_controller_xyz[arm_name] is None:
-            self.init_controller_xyz[arm_name] = controller_xyz.copy()
-            self.init_controller_quat[arm_name] = controller_quat.copy()
-            delta_xyz = np.zeros(3)
-            delta_rot = np.array([0.0, 0.0, 0.0])
-        else:
-            delta_xyz = (controller_xyz - self.init_controller_xyz[arm_name]) * self.scale_factor
-            delta_rot = quat_diff_as_angle_axis(self.init_controller_quat[arm_name], controller_quat)
-        return delta_xyz, delta_rot
+    def _get_link_pose(self, link_name: str):
+        """Gets the current world pose for a given link name from Placo."""
+        T_world_link = self.placo_robot.get_T_world_frame(link_name)
+        pos = T_world_link[:3, 3]
+        quat = tf.quaternion_from_matrix(T_world_link)
+        return pos, quat
 
-    def update_ik(self):
-        self.placo_robot.state.q[7:13] = self.left_controller.qpos
-        self.placo_robot.state.q[15:21] = self.right_controller.qpos
-        self.placo_robot.update_kinematics()
-
-        for arm_name, config in self.end_effector_config.items():
-            xr_grip_val = self.xr_client.get_key_value_by_name(config["control_trigger"])
-            self.arm_active[arm_name] = xr_grip_val > (1.0 - CONTROLLER_DEADZONE)
-
-            if self.arm_active[arm_name]:
-                if self.init_ee_xyz[arm_name] is None:
-                    self.init_ee_xyz[arm_name] = self.placo_robot.get_T_world_frame(config["link_name"])[:3, 3]
-                    self.init_ee_quat[arm_name] = tf.quaternion_from_matrix(
-                        self.placo_robot.get_T_world_frame(config["link_name"])
-                    )
-                    print(f"{arm_name} activated.")
-
-                xr_pose = self.xr_client.get_pose_by_name(config["pose_source"])
-                delta_xyz, delta_rot = self._process_xr_pose(xr_pose, arm_name)
-                target_xyz, target_quat = apply_delta_pose(
-                    self.init_ee_xyz[arm_name], self.init_ee_quat[arm_name], delta_xyz, delta_rot
-                )
-                target_pose = tf.quaternion_matrix(target_quat)
-                target_pose[:3, 3] = target_xyz
-                self.effector_task[arm_name].T_world_frame = target_pose
-
-            else:
-                if self.init_ee_xyz[arm_name] is not None:
-                    self.init_ee_xyz[arm_name] = None
-                    self.init_controller_xyz[arm_name] = None
-                    print(f"{arm_name} deactivated.")
-                self.effector_task[arm_name].T_world_frame = self.placo_robot.get_T_world_frame(config["link_name"])
-
-        try:
-            self.solver.solve(True)
-
+    def _ik_thread(self, stop_event: threading.Event):
+        """Dedicated thread for running the IK solver."""
+        rate = rospy.Rate(1.0 / self.dt)
+        while not stop_event.is_set():
+            self._update_robot_state()
+            self._update_gripper_target()
+            self._update_ik()
             if self.visualize_placo:
-                self.placo_vis.display(self.placo_robot.state.q)
-                for name in self.end_effector_config:
-                    frame_viz(f"vis_target_{name}", self.effector_task[name].T_world_frame)
-        except RuntimeError as e:
-            print(f"IK solver failed: {e}")
-        except Exception as e:
-            print(f"An unexpected error occurred in IK: {e}")
+                self._update_placo_viz()
+            rate.sleep()
+        print("IK loop has stopped.")
 
-        for arm_name, config in self.end_effector_config.items():
-            if arm_name == "left_arm" and self.arm_active[arm_name]:
-                self.left_controller.q_des = self.placo_robot.state.q[7:13].copy()
-            if arm_name == "right_arm" and self.arm_active[arm_name]:
-                self.right_controller.q_des = self.placo_robot.state.q[15:21].copy()
-            # Update gripper position based on XR input
-            if "gripper_config" in config:
-                gripper_config = config["gripper_config"]
-                trigger_value = self.xr_client.get_key_value_by_name(gripper_config["gripper_trigger"])
-                gripper_pos = calc_parallel_gripper_position(
-                    gripper_config["open_pos"],
-                    gripper_config["close_pos"],
-                    trigger_value,
-                )
-                joint_name = gripper_config["joint_name"]
-                self.gripper_pos_target[joint_name] = [gripper_pos]
+    def _control_thread(self, stop_event: threading.Event):
+        """Dedicated thread for sending commands to hardware."""
+        rate = rospy.Rate(self.ros_rate_hz)  # High-frequency control loop
+        while not stop_event.is_set():
+            self._send_command()
+            rate.sleep()
+        print("Control loop has stopped.")
 
-        self.left_controller.q_des_gripper = self.gripper_pos_target[
-            self.end_effector_config["left_arm"]["gripper_config"]["joint_name"]
-        ]
-        self.right_controller.q_des_gripper = self.gripper_pos_target[
-            self.end_effector_config["right_arm"]["gripper_config"]["joint_name"]
-        ]
-        print(self.right_controller.q_des_gripper)
+    def run(self):
+        """
+        Main entry point that starts the multi-threaded IK and control loops.
+        """
+        ik_thread = threading.Thread(target=self._ik_thread, args=(self._stop_event,))
+        control_thread = threading.Thread(target=self._control_thread, args=(self._stop_event,))
 
-    def run_ik_thread(self, stop_event: threading.Event):
-        print("Starting Galaxea A1X single arm teleop controller IK loop...")
-        while not (rospy.is_shutdown() or stop_event.is_set()):
-            start = time.time()
-            self.update_ik()
-            elapsed = time.time() - start
-            time.sleep(max(0, (self.solver.dt - elapsed)))
-        print("Galaxea teleop controller IK loop shutting down.")
+        ik_thread.daemon = True
+        control_thread.daemon = True
 
-    def run_left_arm_control_thread(self, stop_event: threading.Event):
-        print("Starting Galaxea A1X left arm teleop controller loop...")
-        while not (rospy.is_shutdown() or stop_event.is_set()):
-            self.left_controller.publish_arm_control()
-            self.left_controller.publish_gripper_control()
-            self.left_controller.rate.sleep()
-        print("Galaxea teleop left controller shutting down.")
+        ik_thread.start()
+        control_thread.start()
 
-    def run_right_arm_control_thread(self, stop_event: threading.Event):
-        print("Starting Galaxea A1X right arm teleop controller loop...")
-        while not (rospy.is_shutdown() or stop_event.is_set()):
-            self.right_controller.publish_arm_control()
-            self.right_controller.publish_gripper_control()
-            self.right_controller.rate.sleep()
-        print("Galaxea teleop right controller shutting down.")
+        print("Teleoperation running. Press Ctrl+C to exit.")
+        try:
+            rospy.spin()
+        except KeyboardInterrupt:
+            print("\nKeyboard interrupt received.")
+        finally:
+            print("Shutting down...")
+            self._stop_event.set()  # Ensure stop event is set
+            ik_thread.join(timeout=2.0)
+            control_thread.join(timeout=2.0)
+            print("All threads have been shut down.")

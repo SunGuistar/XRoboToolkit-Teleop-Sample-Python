@@ -216,11 +216,6 @@ class BaseTeleopController(abc.ABC):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def _cleanup(self):
-        """Cleanly shuts down the backend (disconnects, closes windows, etc.)."""
-        raise NotImplementedError
-
-    @abc.abstractmethod
     def _update_robot_state(self):
         """Reads the current joint states from the robot/sim and updates self.placo_robot.state.q."""
         raise NotImplementedError
