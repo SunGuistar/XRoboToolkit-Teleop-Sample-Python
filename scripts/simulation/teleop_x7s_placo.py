@@ -41,13 +41,11 @@ def main():
 
     # additional constraints hardcoded here for now
     joints_task = controller.solver.add_joints_task()
-    joints_task.set_joints({joint: 0.0 for joint in controller.robot.joint_names()})
+    joints_task.set_joints({joint: 0.0 for joint in controller.placo_robot.joint_names()})
     joints_task.configure("joints_regularization", "soft", 5e-4)
 
-    if "joint2" in controller.robot.joint_names():
-        controller.robot.set_joint_limits(
-            "joint2", -0.5, 0.1
-        )  # to avoid excessive tilting of torso
+    if "joint2" in controller.placo_robot.joint_names():
+        controller.placo_robot.set_joint_limits("joint2", -0.5, 0.1)  # to avoid excessive tilting of torso
         controller.solver.enable_velocity_limits(True)
 
     controller.run()

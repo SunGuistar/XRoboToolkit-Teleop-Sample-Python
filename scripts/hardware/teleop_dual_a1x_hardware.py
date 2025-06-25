@@ -2,8 +2,8 @@ import threading
 
 import rospy
 
+from xrobotoolkit_teleop.common.xr_client import XrClient
 from xrobotoolkit_teleop.hardware.galaxea_teleop_controller import GalaxeaDualA1XTeleopController
-from xrobotoolkit_teleop.utils.xr_client import XrClient
 
 
 def main():
@@ -13,7 +13,12 @@ def main():
     stop_event = threading.Event()
     rospy.on_shutdown(lambda: stop_event.set())
     left_arm_thread = threading.Thread(
-        target=controller.run_control_thread,
+        target=controller.run_left_arm_control_thread,
+        args=(stop_event,),
+    )
+
+    right_arm_thread = threading.Thread(
+        target=controller.run_right_arm_control_thread,
         args=(stop_event,),
     )
 
@@ -23,6 +28,7 @@ def main():
     )
 
     left_arm_thread.start()
+    right_arm_thread.start()
     ik_thread.start()
 
     try:
@@ -33,6 +39,7 @@ def main():
         stop_event.set()
 
     left_arm_thread.join()
+    right_arm_thread.join()
     ik_thread.join()
 
 

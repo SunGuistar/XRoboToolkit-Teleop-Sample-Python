@@ -4,13 +4,13 @@ import time
 import meshcat.transformations as tf
 import numpy as np
 
+from xrobotoolkit_teleop.common.xr_client import XrClient
 from xrobotoolkit_teleop.hardware.dynamixel import (
     DEFAULT_BAUDRATE,
     DEFAULT_DEVICE_NAME,
     DYNAMIXEL_DEGREE_PER_UNIT,
     DynamixelController,
 )
-from xrobotoolkit_teleop.utils.xr_client import XrClient
 
 
 class DynamixelHeadController:
@@ -89,9 +89,7 @@ class DynamixelHeadController:
         """
         try:
             head_pose = self.xr_client.get_pose_by_name("headset")
-            quat = np.array(
-                [head_pose[6], head_pose[3], head_pose[4], head_pose[5]]
-            )  # [w, x, y, z]
+            quat = np.array([head_pose[6], head_pose[3], head_pose[4], head_pose[5]])  # [w, x, y, z]
             rot_matrix = self.tf.quaternion_matrix(quat)[:3, :3]
             euler = self.tf.euler_from_matrix(rot_matrix, "rzxy")
             currentYaw = euler[2] * 180.0 / np.pi

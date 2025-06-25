@@ -2,11 +2,11 @@ import argparse
 import threading
 import time
 
+from xrobotoolkit_teleop.common.xr_client import XrClient
 from xrobotoolkit_teleop.hardware import (
     DualArmURController,
     DynamixelHeadController,
 )
-from xrobotoolkit_teleop.utils.xr_client import XrClient
 
 
 def main():
@@ -16,9 +16,7 @@ def main():
         action="store_true",
         help="Run the reset procedure for the dual arm controller.",
     )
-    parser.add_argument(
-        "--visualize_placo", action="store_true", help="Visualize Placo in the arm controller."
-    )
+    parser.add_argument("--visualize_placo", action="store_true", help="Visualize Placo in the arm controller.")
 
     args = parser.parse_args()
 

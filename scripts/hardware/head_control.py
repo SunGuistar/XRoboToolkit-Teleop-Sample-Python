@@ -1,8 +1,8 @@
 import threading
 import time
 
+from xrobotoolkit_teleop.common.xr_client import XrClient
 from xrobotoolkit_teleop.hardware import DynamixelHeadController
-from xrobotoolkit_teleop.utils.xr_client import XrClient
 
 
 def main():

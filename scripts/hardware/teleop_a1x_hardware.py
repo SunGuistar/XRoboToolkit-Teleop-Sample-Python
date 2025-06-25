@@ -2,8 +2,8 @@ import threading
 
 import rospy
 
+from xrobotoolkit_teleop.common.xr_client import XrClient
 from xrobotoolkit_teleop.hardware.galaxea_teleop_controller import GalaxeaA1XTeleopController
-from xrobotoolkit_teleop.utils.xr_client import XrClient
 
 
 def main():

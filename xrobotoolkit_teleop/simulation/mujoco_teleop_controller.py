@@ -11,6 +11,7 @@ from placo_utils.visualization import (
     robot_viz,
 )
 
+from xrobotoolkit_teleop.common.xr_client import XrClient
 from xrobotoolkit_teleop.utils.geometry import (
     R_HEADSET_TO_WORLD,
     apply_delta_pose,
@@ -25,7 +26,6 @@ from xrobotoolkit_teleop.utils.mujoco_utils import (
 from xrobotoolkit_teleop.utils.parallel_gripper_utils import (
     calc_parallel_gripper_position,
 )
-from xrobotoolkit_teleop.utils.xr_client import XrClient
 
 
 class MujocoTeleopController:

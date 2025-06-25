@@ -9,6 +9,7 @@ import placo
 import rospy
 from placo_utils.visualization import frame_viz, robot_frame_viz, robot_viz
 
+from xrobotoolkit_teleop.common.xr_client import XrClient
 from xrobotoolkit_teleop.hardware.galaxea import A1XController
 from xrobotoolkit_teleop.utils.geometry import (
     R_HEADSET_TO_WORLD,
@@ -17,7 +18,6 @@ from xrobotoolkit_teleop.utils.geometry import (
 )
 from xrobotoolkit_teleop.utils.parallel_gripper_utils import calc_parallel_gripper_position
 from xrobotoolkit_teleop.utils.path_utils import ASSET_PATH
-from xrobotoolkit_teleop.utils.xr_client import XrClient
 
 # Default paths and configurations for a single right arm
 DEFAULT_SINGLE_A1X_URDF_PATH = os.path.join(ASSET_PATH, "galaxea/A1X/a1x.urdf")
@@ -87,9 +87,9 @@ class GalaxeaA1XTeleopController:
 
         rospy.init_node("galaxea_teleop_controller", anonymous=True)
         self.right_controller = A1XController(
-            arm_control_topic="/motion_control/control_arm_right",
-            gripper_control_topic="/motion_control/control_gripper_right",
-            arm_state_topic="/hdas/feedback_arm_right",
+            arm_control_topic="/motion_control/control_arm",
+            gripper_control_topic="/motion_control/control_gripper",
+            arm_state_topic="/hdas/feedback_arm",
             rate_hz=ros_rate_hz,
         )
 
@@ -423,12 +423,18 @@ class GalaxeaDualA1XTeleopController:
             time.sleep(max(0, (self.solver.dt - elapsed)))
         print("Galaxea teleop controller IK loop shutting down.")
 
-    def run_control_thread(self, stop_event: threading.Event):
-        print("Starting Galaxea A1X single arm teleop controller loop...")
+    def run_left_arm_control_thread(self, stop_event: threading.Event):
+        print("Starting Galaxea A1X left arm teleop controller loop...")
         while not (rospy.is_shutdown() or stop_event.is_set()):
             self.left_controller.publish_arm_control()
             self.left_controller.publish_gripper_control()
+            self.left_controller.rate.sleep()
+        print("Galaxea teleop left controller shutting down.")
+
+    def run_right_arm_control_thread(self, stop_event: threading.Event):
+        print("Starting Galaxea A1X right arm teleop controller loop...")
+        while not (rospy.is_shutdown() or stop_event.is_set()):
             self.right_controller.publish_arm_control()
             self.right_controller.publish_gripper_control()
             self.right_controller.rate.sleep()
-        print("Galaxea teleop controller shutting down.")
+        print("Galaxea teleop right controller shutting down.")
