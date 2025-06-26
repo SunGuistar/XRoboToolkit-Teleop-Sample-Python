@@ -59,19 +59,21 @@
         "right_hand": {
             # other configs,
             "gripper_config": {
-                "joint_name": "right_gripper_finger_joint1",
+                "type": "parallel",
                 "gripper_trigger": "right_trigger",
-                "open_pos": 0.05,
-                "close_pos": 0.0,
+                "joint_names": ["right_gripper_finger_joint1",],
+                "open_pos": [0.05,],
+                "close_pos": [0.0,],
             },
         },
         "left_hand": {
             # other configs,
             "gripper_config": {
-                "joint_name": "left_gripper_finger_joint1",
+                "type": "parallel",
                 "gripper_trigger": "left_trigger",
-                "open_pos": 0.05,
-                "close_pos": 0.0,
+                "joint_names": ["left_gripper_finger_joint1",],
+                "open_pos": [0.05,],
+                "close_pos": [0.0,],
             },
         },
     }
@@ -88,7 +90,7 @@
     python scripts/simulation/teleop_dual_a1x_mujoco.py
     ```
 
-## Hardware teleoperation:
+## UR5 Hardware teleoperation:
 - Robot definition files: only `.urdf` file is required
 - Config
   - link_name: the name of end effector link as defined in mujoco .xml & .urdf files
@@ -115,3 +117,41 @@
     ```bash
     python scripts/hardware/teleop_dual_ur5e_hardware.py
     ```
+
+# Galaxea A1X Hardware teleoperation
+- Robot definition files: only `.urdf` is needed.
+- Config: same configuration as A1X simulation
+  ```python
+    DEFAULT_DUAL_END_EFFECTOR_CONFIG = {
+      "right_arm": {
+          "link_name": "right_gripper_link",
+          "pose_source": "right_controller",
+          "control_trigger": "right_grip",
+          "gripper_config": {
+              "type": "parallel",
+              "gripper_trigger": "right_trigger",
+              "joint_names": ["right_gripper_finger_joint1",],
+              "open_pos": [-2.0,],
+              "close_pos": [0.0,],
+          },
+      },
+      "left_arm": {
+          "link_name": "left_gripper_link",
+          "pose_source": "left_controller",
+          "control_trigger": "left_grip",
+          "gripper_config": {
+              "type": "parallel",
+              "gripper_trigger": "left_trigger",
+              "joint_names": [
+                  "left_gripper_finger_joint1",
+              ],
+              "open_pos": [-2.0,],
+              "close_pos": [0.0,],
+          },
+      },
+  }
+  ```
+- run the following script
+  ```bash
+  python scripts/hardware/teleop_dual_a1x_hardware.py
+  ```

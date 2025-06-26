@@ -12,7 +12,8 @@ from placo_utils.visualization import (
     robot_viz,
 )
 
-from xrobotoolkit_teleop.hardware.ur import (
+from xrobotoolkit_teleop.common.xr_client import XrClient
+from xrobotoolkit_teleop.hardware.interface.universal_robots import (
     CONTROLLER_DEADZONE,
     GRIPPER_FORCE,
     GRIPPER_SPEED,
@@ -34,7 +35,6 @@ from xrobotoolkit_teleop.utils.geometry import (
 )
 from xrobotoolkit_teleop.utils.parallel_gripper_utils import calc_parallel_gripper_position
 from xrobotoolkit_teleop.utils.path_utils import ASSET_PATH
-from xrobotoolkit_teleop.utils.xr_client import XrClient
 
 DEFAULT_DUAL_ARM_URDF_PATH = os.path.join(ASSET_PATH, "universal_robots_ur5e/dual_ur5e.urdf")
 DEFAULT_SCALE_FACTOR = 1.0

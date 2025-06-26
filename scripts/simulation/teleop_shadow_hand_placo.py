@@ -8,9 +8,9 @@ from placo_utils.visualization import (
     robot_viz,
 )
 
+from xrobotoolkit_teleop.common.xr_client import XrClient
 from xrobotoolkit_teleop.utils.dex_hand_utils import DexHandTracker, pico_hand_state_to_mediapipe
 from xrobotoolkit_teleop.utils.path_utils import ASSET_PATH
-from xrobotoolkit_teleop.utils.xr_client import XrClient
 
 
 def main():
