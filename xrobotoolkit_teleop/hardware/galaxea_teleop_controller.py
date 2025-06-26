@@ -1,5 +1,6 @@
 import os
 import threading
+import time
 from typing import Dict
 
 import meshcat.transformations as tf
@@ -90,6 +91,9 @@ class GalaxeaA1XTeleopController(BaseTeleopController):
         scale_factor: float = DEFAULT_SCALE_FACTOR,
         visualize_placo: bool = True,
         ros_rate_hz: int = 100,
+        enable_log_data: bool = True,
+        log_dir: str = "logs/galaxea",
+        log_freq: float = 50,
     ):
         super().__init__(
             robot_urdf_path=robot_urdf_path,
@@ -99,7 +103,12 @@ class GalaxeaA1XTeleopController(BaseTeleopController):
             scale_factor=scale_factor,
             q_init=None,  # No initial joint position needed for Galaxea
             dt=1.0 / ros_rate_hz,
+            enable_log_data=enable_log_data,
+            log_dir=log_dir,
+            log_freq=log_freq,
         )
+
+        self._start_time = 0
 
         self.ros_rate_hz = ros_rate_hz
         self.visualize_placo = visualize_placo
@@ -170,6 +179,21 @@ class GalaxeaA1XTeleopController(BaseTeleopController):
         quat = tf.quaternion_from_matrix(T_world_link)
         return pos, quat
 
+    def _log_data(self):
+        if self.enable_log_data:
+            """
+            Logs the current state of the robot, including joint positions, end effector poses,
+            and any other relevant data.
+            """
+            timestamp = time.time() - self._start_time  # Relative timestamp from start
+            data_entry = {
+                "timestamp": timestamp,
+                "qpos": {arm: controller.qpos for arm, controller in self.arm_controllers.items()},
+                "qvel": {arm: controller.qvel for arm, controller in self.arm_controllers.items()},
+                "eef_qpos": {arm: controller.qpos_gripper for arm, controller in self.arm_controllers.items()},
+            }
+            self.data_logger.add_entry(data_entry)
+
     def _ik_thread(self, stop_event: threading.Event):
         """Dedicated thread for running the IK solver."""
         rate = rospy.Rate(1.0 / self.dt)
@@ -190,10 +214,20 @@ class GalaxeaA1XTeleopController(BaseTeleopController):
             rate.sleep()
         print("Control loop has stopped.")
 
+    def _data_logging_thread(self, stop_event: threading.Event):
+        rate = rospy.Rate(self.log_freq)
+        while not stop_event.is_set():
+            if self.enable_log_data:
+                self._log_data()
+            rate.sleep()
+        self.data_logger.save()  # Save data when logging stops
+        print("Data logging thread has stopped.")
+
     def run(self):
         """
         Main entry point that starts the multi-threaded IK and control loops.
         """
+        self._start_time = time.time()  # Record the start time for logging
         ik_thread = threading.Thread(target=self._ik_thread, args=(self._stop_event,))
         control_thread = threading.Thread(target=self._control_thread, args=(self._stop_event,))
 
@@ -202,6 +236,11 @@ class GalaxeaA1XTeleopController(BaseTeleopController):
 
         ik_thread.start()
         control_thread.start()
+
+        if self.enable_log_data:
+            data_logging_thread = threading.Thread(target=self._data_logging_thread, args=(self._stop_event,))
+            data_logging_thread.start()
+            print("Data logging thread started.")
 
         print("Teleoperation running. Press Ctrl+C to exit.")
         try:
@@ -213,4 +252,6 @@ class GalaxeaA1XTeleopController(BaseTeleopController):
             self._stop_event.set()  # Ensure stop event is set
             ik_thread.join(timeout=2.0)
             control_thread.join(timeout=2.0)
+            if self.enable_log_data:
+                data_logging_thread.join(timeout=2.0)
             print("All threads have been shut down.")
