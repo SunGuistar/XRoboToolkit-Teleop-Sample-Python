@@ -2,13 +2,15 @@
 import cv2
 import numpy as np
 
-from xrobotoolkit_teleop.hardware.interface.realsense import RealSenseCameraInterface
+from xrobotoolkit_teleop.hardware.interface.realsense import RealSenseCameraInterface, get_supported_resolutions
 
 
 def main():
     try:
         with RealSenseCameraInterface() as camera_interface:
+            print(get_supported_resolutions("215222077461"))
             while True:
+                camera_interface.update_frames()  # Fetch new frames from cameras
                 frames_dict = camera_interface.get_frames()
 
                 for serial, frames in frames_dict.items():

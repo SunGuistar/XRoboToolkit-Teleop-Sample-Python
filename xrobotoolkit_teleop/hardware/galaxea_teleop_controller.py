@@ -3,12 +3,14 @@ import threading
 import time
 from typing import Dict
 
+import cv2
 import meshcat.transformations as tf
 import numpy as np
 import rospy
 
 from xrobotoolkit_teleop.common.base_teleop_controller import BaseTeleopController
 from xrobotoolkit_teleop.hardware.interface.galaxea import A1XController
+from xrobotoolkit_teleop.hardware.interface.realsense import RealSenseCameraInterface
 from xrobotoolkit_teleop.utils.geometry import (
     R_HEADSET_TO_WORLD,
 )
@@ -20,10 +22,19 @@ DEFAULT_DUAL_A1X_URDF_PATH = os.path.join(ASSET_PATH, "galaxea/A1X/dual_a1x.urdf
 DEFAULT_SCALE_FACTOR = 1.0
 CONTROLLER_DEADZONE = 0.1
 
-# Default end-effector configuration for a single right arm without a gripper
+DEFAULT_LEFT_WRIST_CAM_SERIAL = "218622272014"
+DEFAULT_RIGHT_WRIST_CAM_SERIAL = "218622272499"
+DEFAULT_BASE_CAM_SERIAL = "215222077461"
+
+CAM_SERIAL_DICT = {
+    "left_wrist": DEFAULT_LEFT_WRIST_CAM_SERIAL,
+    "right_wrist": DEFAULT_RIGHT_WRIST_CAM_SERIAL,
+    "base": DEFAULT_BASE_CAM_SERIAL,
+}
+
 DEFAULT_END_EFFECTOR_CONFIG = {
     "left_arm": {
-        "link_name": "gripper_link",  # URDF link name for the single arm
+        "link_name": "gripper_link",
         "pose_source": "right_controller",
         "control_trigger": "right_grip",
         "gripper_config": {
@@ -89,19 +100,25 @@ class GalaxeaA1XTeleopController(BaseTeleopController):
         end_effector_config: dict = DEFAULT_DUAL_END_EFFECTOR_CONFIG,
         R_headset_world: np.ndarray = R_HEADSET_TO_WORLD,
         scale_factor: float = DEFAULT_SCALE_FACTOR,
-        visualize_placo: bool = True,
+        visualize_placo: bool = False,
         ros_rate_hz: int = 100,
         enable_log_data: bool = True,
         log_dir: str = "logs/galaxea",
         log_freq: float = 50,
+        enable_camera: bool = True,
+        camera_serial_dict: Dict[str, str] = CAM_SERIAL_DICT,
+        camera_width: int = 424,
+        camera_height: int = 240,
+        camera_fps: int = 60,
+        enable_camera_depth: bool = False,
     ):
         super().__init__(
             robot_urdf_path=robot_urdf_path,
             end_effector_config=end_effector_config,
-            floating_base=False,  # Galaxea A1X does not have a floating base
+            floating_base=False,
             R_headset_world=R_headset_world,
             scale_factor=scale_factor,
-            q_init=None,  # No initial joint position needed for Galaxea
+            q_init=None,
             dt=1.0 / ros_rate_hz,
             enable_log_data=enable_log_data,
             log_dir=log_dir,
@@ -114,6 +131,25 @@ class GalaxeaA1XTeleopController(BaseTeleopController):
         self.visualize_placo = visualize_placo
         if self.visualize_placo:
             self._init_placo_viz()
+
+        self.camera_interface = None
+        self.camera_serial_dict = camera_serial_dict
+        if enable_camera:
+            print("Initializing camera...")
+            try:
+                self.camera_interface = RealSenseCameraInterface(
+                    width=camera_width,
+                    height=camera_height,
+                    fps=camera_fps,
+                    serial_numbers=camera_serial_dict.values(),
+                    enable_depth=enable_camera_depth,
+                )
+                self.camera_interface.start()
+                self.camera_interface.update_frames()
+                print("Camera initialized successfully.")
+            except Exception as e:
+                print(f"Error initializing camera: {e}")
+                self.camera_interface = None
 
     def _placo_setup(self):
         super()._placo_setup()
@@ -142,7 +178,6 @@ class GalaxeaA1XTeleopController(BaseTeleopController):
             )
             self.arm_controllers[arm_name] = controller
 
-        # Wait for all controllers to receive their first joint state
         print("Waiting for initial joint states from Galaxea arms...")
         all_controllers_ready = False
         while not rospy.is_shutdown() and not all_controllers_ready:
@@ -158,11 +193,9 @@ class GalaxeaA1XTeleopController(BaseTeleopController):
     def _send_command(self):
         """Sends the solved joint targets to the hardware controllers."""
         for arm_name, controller in self.arm_controllers.items():
-            # Only send arm commands if the arm is active to prevent unwanted motion
             if self.active.get(arm_name, False):
                 controller.q_des = self.placo_robot.state.q[self.placo_arm_joint_slice[arm_name]].copy()
 
-            # Always send gripper commands
             if "gripper_config" in self.end_effector_config[arm_name]:
                 controller.q_des_gripper = [
                     self.gripper_pos_target[arm_name][gripper_joint]
@@ -185,13 +218,23 @@ class GalaxeaA1XTeleopController(BaseTeleopController):
             Logs the current state of the robot, including joint positions, end effector poses,
             and any other relevant data.
             """
-            timestamp = time.time() - self._start_time  # Relative timestamp from start
+
+            timestamp = time.time() - self._start_time
             data_entry = {
                 "timestamp": timestamp,
                 "qpos": {arm: controller.qpos for arm, controller in self.arm_controllers.items()},
                 "qvel": {arm: controller.qvel for arm, controller in self.arm_controllers.items()},
                 "eef_qpos": {arm: controller.qpos_gripper for arm, controller in self.arm_controllers.items()},
             }
+            if self.camera_interface:
+                cam_dict = {}
+                frames_dict = self.camera_interface.get_frames()
+                for name, serial in self.camera_serial_dict.items():
+                    frame_data = frames_dict[serial]
+                    if frame_data:
+                        cam_dict[name] = frame_data
+                if cam_dict:
+                    data_entry["image"] = cam_dict
             self.data_logger.add_entry(data_entry)
 
     def _ik_thread(self, stop_event: threading.Event):
@@ -223,6 +266,70 @@ class GalaxeaA1XTeleopController(BaseTeleopController):
         self.data_logger.save()  # Save data when logging stops
         print("Data logging thread has stopped.")
 
+    def _camera_thread(self, stop_event: threading.Event):
+        """Dedicated thread for managing the camera lifecycle and streaming."""
+        if not self.camera_interface:
+            return
+
+        print("Camera streaming started.")
+        window_name = "RealSense Cameras"
+        cv2.namedWindow(window_name, cv2.WINDOW_AUTOSIZE)
+
+        try:
+            while not stop_event.is_set():
+                self.camera_interface.update_frames()
+                frames_dict = self.camera_interface.get_frames()
+                all_camera_rows = []
+
+                # Use the configured camera dictionary to maintain a consistent order
+                for serial in self.camera_serial_dict.values():
+                    if serial not in frames_dict:
+                        continue
+
+                    frames = frames_dict[serial]
+                    images_in_row = []
+
+                    color_image = frames.get("color")
+                    if color_image is not None:
+                        # Ensure color image is 3-channel for stacking with colormap
+                        if len(color_image.shape) == 2:
+                            color_image = cv2.cvtColor(color_image, cv2.COLOR_GRAY2BGR)
+                        images_in_row.append(color_image)
+
+                    depth_image = frames.get("depth")
+                    if depth_image is not None:
+                        depth_colormap = cv2.applyColorMap(
+                            cv2.convertScaleAbs(depth_image, alpha=0.03), cv2.COLORMAP_JET
+                        )
+                        images_in_row.append(depth_colormap)
+
+                    if images_in_row:
+                        all_camera_rows.append(np.hstack(images_in_row))
+
+                if all_camera_rows:
+                    # Pad rows to the same width for vertical stacking
+                    max_width = max(row.shape[1] for row in all_camera_rows)
+                    padded_rows = []
+                    for row in all_camera_rows:
+                        if row.shape[1] < max_width:
+                            # Assuming 3 channels for color/colormap and consistent height
+                            padding = np.zeros((row.shape[0], max_width - row.shape[1], 3), dtype=np.uint8)
+                            padded_row = np.hstack([row, padding])
+                            padded_rows.append(padded_row)
+                        else:
+                            padded_rows.append(row)
+
+                    # Vertically stack all camera rows into a single image
+                    combined_image = np.vstack(padded_rows)
+                    cv2.imshow(window_name, combined_image)
+
+                # Process GUI events
+                cv2.waitKey(int(1000.0 / self.camera_interface.fps))
+        finally:
+            self.camera_interface.stop()
+            cv2.destroyAllWindows()
+            print("Camera thread has stopped.")
+
     def run(self):
         """
         Main entry point that starts the multi-threaded IK and control loops.
@@ -238,9 +345,14 @@ class GalaxeaA1XTeleopController(BaseTeleopController):
         control_thread.start()
 
         if self.enable_log_data:
-            data_logging_thread = threading.Thread(target=self._data_logging_thread, args=(self._stop_event,))
-            data_logging_thread.start()
-            print("Data logging thread started.")
+            log_thread = threading.Thread(target=self._data_logging_thread, args=(self._stop_event,))
+            log_thread.daemon = True
+            log_thread.start()
+
+        if self.camera_interface:
+            camera_thread = threading.Thread(target=self._camera_thread, args=(self._stop_event,))
+            camera_thread.daemon = True
+            camera_thread.start()
 
         print("Teleoperation running. Press Ctrl+C to exit.")
         try:
@@ -249,9 +361,11 @@ class GalaxeaA1XTeleopController(BaseTeleopController):
             print("\nKeyboard interrupt received.")
         finally:
             print("Shutting down...")
-            self._stop_event.set()  # Ensure stop event is set
+            self._stop_event.set()
             ik_thread.join(timeout=2.0)
             control_thread.join(timeout=2.0)
             if self.enable_log_data:
-                data_logging_thread.join(timeout=2.0)
+                log_thread.join(timeout=2.0)
+            if self.camera_interface:
+                camera_thread.join(timeout=2.0)
             print("All threads have been shut down.")

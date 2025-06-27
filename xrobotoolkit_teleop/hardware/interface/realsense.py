@@ -1,3 +1,6 @@
+import threading
+import time
+
 import numpy as np
 import pyrealsense2 as rs
 
@@ -35,6 +38,10 @@ class RealSenseCameraInterface:
         self.configs = {}
         self.align = {}
 
+        self.frames_dict = {}
+        self.frames_lock = threading.Lock()  # Thread-safe access to frames
+        self.last_update_time = {}  # Track last successful frame update per camera
+
         self.context = rs.context()
         devices = self.context.query_devices()
 
@@ -58,12 +65,13 @@ class RealSenseCameraInterface:
             config.enable_device(serial)
             if self.enable_depth:
                 config.enable_stream(rs.stream.depth, self.width, self.height, rs.format.z16, self.fps)
-            config.enable_stream(rs.stream.color, self.width, self.height, rs.format.bgr8, self.fps)
+            config.enable_stream(rs.stream.color, self.width, self.height, rs.format.rgb8, self.fps)
             self.pipelines[serial] = pipeline
             self.configs[serial] = config
             # Align depth frames to color frames
             if self.enable_depth:
                 self.align[serial] = rs.align(rs.stream.color)
+            self.last_update_time[serial] = 0
             print(f"Initialized RealSense camera: {serial}")
 
     def start(self):
@@ -72,19 +80,23 @@ class RealSenseCameraInterface:
             pipeline.start(self.configs[serial])
             print(f"Started pipeline for camera: {serial}")
 
-    def get_frames(self):
+    def update_frames(self):
         """
-        Fetches and returns frames from all cameras.
+        Fetches and returns frames from all cameras with improved error handling and timeout management.
 
         Returns:
             dict: A dictionary where keys are camera serial numbers and values are
                   another dictionary containing 'color' and 'depth' numpy arrays,
                   the 'timestamp_us' of the frame, and stream format information.
         """
+        current_time = time.time()
         frames_dict = {}
+
         for serial, pipeline in self.pipelines.items():
             try:
-                frames = pipeline.wait_for_frames(timeout_ms=1000)
+                # Use shorter timeout and exponential backoff on failures
+                timeout_ms = 500  # Reduced timeout to prevent blocking
+                frames = pipeline.wait_for_frames(timeout_ms=timeout_ms)
 
                 color_frame = None
                 depth_frame = None
@@ -97,10 +109,11 @@ class RealSenseCameraInterface:
                     color_frame = frames.get_color_frame()
 
                 if not color_frame:
+                    print(f"Warning: No color frame available from camera {serial}")
                     continue
 
-                color_image = np.asanyarray(color_frame.get_data())
-                depth_image = np.asanyarray(depth_frame.get_data()) if depth_frame else None
+                color_image = np.asanyarray(color_frame.get_data()).copy()
+                depth_image = np.asanyarray(depth_frame.get_data()).copy() if depth_frame else None
 
                 frames_dict[serial] = {
                     "color": color_image,
@@ -109,14 +122,38 @@ class RealSenseCameraInterface:
                     "color_format": color_frame.get_profile().format(),
                     "depth_format": depth_frame.get_profile().format() if depth_frame else None,
                 }
+
+                self.last_update_time[serial] = current_time
+
             except RuntimeError as e:
-                print(f"Error getting frames from {serial}: {e}")
+                # Handle timeout more gracefully
+                if "timeout" in str(e).lower():
+                    print(
+                        f"Frame timeout for camera {serial} (last successful: {current_time - self.last_update_time[serial]:.2f}s ago)"
+                    )
+                else:
+                    print(f"Error getting frames from {serial}: {e}")
                 continue
-        return frames_dict
+
+        # Thread-safe update of frames dictionary
+        with self.frames_lock:
+            self.frames_dict = frames_dict
+
+    def get_frames(self):
+        """
+        Fetches frames from all initialized cameras (thread-safe).
+
+        Returns:
+            dict: A dictionary where keys are camera serial numbers and values are
+                  another dictionary containing 'color' and 'depth' numpy arrays,
+                  the 'timestamp_us' of the frame, and stream format information.
+        """
+        with self.frames_lock:
+            return self.frames_dict.copy()
 
     def get_frame(self, serial: str):
         """
-        Fetches frames from a specific camera.
+        Fetches frames from a specific camera (thread-safe).
 
         Args:
             serial (str): The serial number of the camera.
@@ -125,41 +162,8 @@ class RealSenseCameraInterface:
             dict: A dictionary containing 'color' and 'depth' numpy arrays,
                   the 'timestamp_us' of the frame, and stream format information.
         """
-        if serial not in self.pipelines:
-            raise ValueError(f"Camera with serial {serial} is not initialized.")
-
-        pipeline = self.pipelines[serial]
-        try:
-            frames = pipeline.wait_for_frames(timeout_ms=1000)
-
-            color_frame = None
-            depth_frame = None
-
-            if self.enable_depth:
-                aligned_frames = self.align[serial].process(frames)
-                color_frame = aligned_frames.get_color_frame()
-                depth_frame = aligned_frames.get_depth_frame()
-            else:
-                color_frame = frames.get_color_frame()
-
-            if not color_frame:
-                return None
-
-            color_image = np.asanyarray(color_frame.get_data())
-            depth_image = np.asanyarray(depth_frame.get_data()) if depth_frame else None
-
-            frame_dict = {
-                "color": color_image,
-                "depth": depth_image,
-                "timestamp_us": color_frame.get_timestamp(),  # microseconds
-                "color_format": color_frame.get_profile().format(),
-                "depth_format": depth_frame.get_profile().format() if depth_frame else None,
-            }
-            return frame_dict
-
-        except RuntimeError as e:
-            print(f"Error getting frames from {serial}: {e}")
-            return None
+        with self.frames_lock:
+            return self.frames_dict[serial].copy() if serial in self.frames_dict else None
 
     def stop(self):
         """Stops the camera pipelines."""
