@@ -21,7 +21,8 @@ dependencies = [
     "dynamixel-sdk",
     "rospkg",
     "torch",
-    "dex_retargeting"
+    "dex_retargeting",
+    "pyrealsense2",
 ]
 
 [project.optional-dependencies]

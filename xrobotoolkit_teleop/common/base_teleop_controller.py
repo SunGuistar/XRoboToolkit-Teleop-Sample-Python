@@ -12,6 +12,7 @@ from placo_utils.visualization import (
     robot_viz,
 )
 
+from xrobotoolkit_teleop.common.data_logger import DataLogger
 from xrobotoolkit_teleop.common.xr_client import XrClient
 from xrobotoolkit_teleop.utils.geometry import (
     apply_delta_pose,
@@ -32,6 +33,9 @@ class BaseTeleopController(abc.ABC):
         scale_factor: float,
         q_init: np.ndarray,
         dt: float,
+        enable_log_data: bool = False,
+        log_dir: str = "logs",
+        log_freq: float = 50,
     ):
         self.robot_urdf_path = robot_urdf_path
         self.end_effector_config = end_effector_config
@@ -41,6 +45,12 @@ class BaseTeleopController(abc.ABC):
         self.q_init = q_init
         self.dt = dt
         self.xr_client = XrClient()
+
+        self.enable_log_data = enable_log_data
+        self.log_dir = log_dir
+        self.log_freq = log_freq
+        if enable_log_data:
+            self.data_logger = DataLogger(log_dir=log_dir)
 
         # Initial poses
         self.ref_ee_xyz = {name: None for name in end_effector_config.keys()}
@@ -205,6 +215,14 @@ class BaseTeleopController(abc.ABC):
             else:
                 # TODO: add dexterous hand support
                 raise ValueError(f"Unsupported gripper type: {gripper_type}")
+
+    def _log_data(self):
+        """
+        Logs the current state of the robot, including joint positions, end effector poses,
+        and any other relevant data
+        """
+        if self.enable_log_data:
+            raise NotImplementedError
 
     # ---------------------------------------------------------
     # --- Abstract Methods (to be implemented by subclasses) ---
