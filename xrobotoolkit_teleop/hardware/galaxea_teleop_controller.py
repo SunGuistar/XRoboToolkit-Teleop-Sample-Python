@@ -151,6 +151,9 @@ class GalaxeaA1XTeleopController(BaseTeleopController):
                 print(f"Error initializing camera: {e}")
                 self.camera_interface = None
 
+        self._prev_b_button_state = False
+        self._is_logging = False
+
     def _placo_setup(self):
         super()._placo_setup()
         for arm_name, config in self.end_effector_config.items():
@@ -224,7 +227,9 @@ class GalaxeaA1XTeleopController(BaseTeleopController):
                 "timestamp": timestamp,
                 "qpos": {arm: controller.qpos for arm, controller in self.arm_controllers.items()},
                 "qvel": {arm: controller.qvel for arm, controller in self.arm_controllers.items()},
-                "eef_qpos": {arm: controller.qpos_gripper for arm, controller in self.arm_controllers.items()},
+                "qpos_des": {arm: controller.q_des for arm, controller in self.arm_controllers.items()},
+                "gripper_qpos": {arm: controller.qpos_gripper for arm, controller in self.arm_controllers.items()},
+                "gripper_qpos_des": {arm: controller.q_des_gripper for arm, controller in self.arm_controllers.items()},
             }
             if self.camera_interface:
                 cam_dict = {}
@@ -261,10 +266,36 @@ class GalaxeaA1XTeleopController(BaseTeleopController):
         rate = rospy.Rate(self.log_freq)
         while not stop_event.is_set():
             if self.enable_log_data:
-                self._log_data()
+                self._check_logging_button()
+                if self._is_logging:
+                    self._log_data()
             rate.sleep()
-        self.data_logger.save()  # Save data when logging stops
+        # if self._is_logging:
+        #     self.data_logger.save()  # Save data when logging stops
         print("Data logging thread has stopped.")
+
+    def _check_logging_button(self):
+        """Checks for the 'B' button press to toggle data logging."""
+        # Assuming 'b_button' is available from the right controller state
+        b_button_state = self.xr_client.get_button_state_by_name("B")
+        right_axis_click = self.xr_client.get_button_state_by_name("right_axis_click")
+
+        # Check for a rising edge (button pressed)
+        if b_button_state and not self._prev_b_button_state:
+            self._is_logging = not self._is_logging
+            if self._is_logging:
+                print("--- Started data logging ---")
+            else:
+                print("--- Stopped data logging. Saving data... ---")
+                self.data_logger.save()
+                self.data_logger.reset()
+
+        if right_axis_click and self._is_logging:
+            print("--- Stopped data logging. Discarding data... ---")
+            self.data_logger.reset()
+            self._is_logging = False
+
+        self._prev_b_button_state = b_button_state
 
     def _camera_thread(self, stop_event: threading.Event):
         """Dedicated thread for managing the camera lifecycle and streaming."""
@@ -321,7 +352,7 @@ class GalaxeaA1XTeleopController(BaseTeleopController):
 
                     # Vertically stack all camera rows into a single image
                     combined_image = np.vstack(padded_rows)
-                    cv2.imshow(window_name, combined_image)
+                    cv2.imshow(window_name, cv2.cvtColor(combined_image, cv2.COLOR_RGB2BGR))
 
                 # Process GUI events
                 cv2.waitKey(int(1000.0 / self.camera_interface.fps))
