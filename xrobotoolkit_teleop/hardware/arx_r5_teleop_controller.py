@@ -15,16 +15,24 @@ from xrobotoolkit_teleop.utils.path_utils import ASSET_PATH
 
 # Default paths and configurations for ARX R5
 DEFAULT_ARX_R5_URDF_PATH = os.path.join(ASSET_PATH, "arx/R5a/R5a.urdf")
+DEFAULT_DUAL_ARX_R5_URDF_PATH = os.path.join(ASSET_PATH, "arx/R5a/dual_R5a.urdf")
 DEFAULT_SCALE_FACTOR = 1.0
 CONTROLLER_DEADZONE = 0.1
 
 # Default camera configuration
-DEFAULT_WRIST_CAM_SERIAL = "218622272499"
+DEFAULT_LEFT_WRIST_CAM_SERIAL = "218622272014"
+DEFAULT_RIGHT_WRIST_CAM_SERIAL = "218622272499"
 DEFAULT_BASE_CAM_SERIAL = "215222077461"
 
 CAM_SERIAL_DICT = {
-    "wrist": DEFAULT_WRIST_CAM_SERIAL,
+    "left_wrist": DEFAULT_LEFT_WRIST_CAM_SERIAL,
+    "right_wrist": DEFAULT_RIGHT_WRIST_CAM_SERIAL,
     "base": DEFAULT_BASE_CAM_SERIAL,
+}
+
+DEFAULT_CAN_PORTS = {
+    "left_arm": "can1",
+    "right_arm": "can3",
 }
 
 # Default end-effector configuration for a single ARX R5 arm
@@ -43,13 +51,40 @@ DEFAULT_ARX_R5_END_EFFECTOR_CONFIG = {
     },
 }
 
+DEFAULT_DUAL_ARX_R5_END_EFFECTOR_CONFIG = {
+    "right_arm": {  # Using "right_arm" for consistency with base controller
+        "link_name": "right_link6",  # URDF link name for the end-effector
+        "pose_source": "right_controller",
+        "control_trigger": "right_grip",
+        "gripper_config": {
+            "type": "parallel",
+            "gripper_trigger": "right_trigger",
+            "joint_names": ["right_joint7"],
+            "open_pos": [5.0],
+            "close_pos": [0.0],
+        },
+    },
+    "left_arm": {  # Using "left_arm" for consistency with base controller
+        "link_name": "left_link6",  # URDF link name for the end-effector
+        "pose_source": "left_controller",
+        "control_trigger": "left_grip",
+        "gripper_config": {
+            "type": "parallel",
+            "gripper_trigger": "left_trigger",
+            "joint_names": ["left_joint7"],
+            "open_pos": [5.0],
+            "close_pos": [0.0],
+        },
+    },
+}
+
 
 class ARXR5TeleopController(BaseTeleopController):
     def __init__(
         self,
-        robot_urdf_path: str = DEFAULT_ARX_R5_URDF_PATH,
-        end_effector_config: dict = DEFAULT_ARX_R5_END_EFFECTOR_CONFIG,
-        can_port: str = "can0",
+        robot_urdf_path: str = DEFAULT_DUAL_ARX_R5_URDF_PATH,
+        end_effector_config: dict = DEFAULT_DUAL_ARX_R5_END_EFFECTOR_CONFIG,
+        can_ports: Dict[str, str] = DEFAULT_CAN_PORTS,
         R_headset_world: np.ndarray = R_HEADSET_TO_WORLD,
         scale_factor: float = DEFAULT_SCALE_FACTOR,
         visualize_placo: bool = False,
@@ -64,7 +99,7 @@ class ARXR5TeleopController(BaseTeleopController):
         camera_fps: int = 60,
         enable_camera_depth: bool = False,
     ):
-        self.can_port = can_port
+        self.can_ports = can_ports
         self.control_rate_hz = control_rate_hz
         super().__init__(
             robot_urdf_path=robot_urdf_path,
@@ -106,37 +141,49 @@ class ARXR5TeleopController(BaseTeleopController):
 
     def _placo_setup(self):
         super()._placo_setup()
-        # Define joint names for the ARX R5 arm based on its URDF
-        arm_joint_names = [f"joint{i}" for i in range(1, 7)]
-        self.placo_arm_joint_slice = slice(
-            self.placo_robot.get_joint_offset(arm_joint_names[0]),
-            self.placo_robot.get_joint_offset(arm_joint_names[-1]) + 1,
-        )
+        self.placo_arm_joint_slice: Dict[str, slice] = {}
+        for arm_name, config in self.end_effector_config.items():
+            ee_link_name = config["link_name"]
+            arm_prefix = ee_link_name.replace("link6", "")
+            arm_joint_names = [f"{arm_prefix}joint{i}" for i in range(1, 7)]
+            self.placo_arm_joint_slice[arm_name] = slice(
+                self.placo_robot.get_joint_offset(arm_joint_names[0]),
+                self.placo_robot.get_joint_offset(arm_joint_names[-1]) + 1,
+            )
 
-    def _robot_setup(self) -> ARXR5Interface:
-        """Initializes the ARX R5 hardware interface."""
-        print(f"Setting up ARX R5 on CAN port: {self.can_port}")
-        self.arm_controller = ARXR5Interface(can_port=self.can_port, dt=1.0 / self.control_rate_hz)
-        print("ARX R5 interface created. Going to home position...")
-        self.arm_controller.go_home()
-        time.sleep(3)  # Wait for the arm to reach home
+    def _robot_setup(self):
+        """Initializes the ARX R5 hardware interfaces for both arms."""
+        self.arm_controllers: Dict[str, ARXR5Interface] = {}
+        for arm_name, can_port in self.can_ports.items():
+            print(f"Setting up ARX R5 {arm_name} on CAN port: {can_port}")
+            arm = ARXR5Interface(can_port=can_port, dt=1.0 / self.control_rate_hz)
+            self.arm_controllers[arm_name] = arm
+
+        print("Going to home position...")
+        for arm in self.arm_controllers.values():
+            arm.go_home()
+
+        time.sleep(1)  # Wait for the arms to reach home
+        print("Arms are at home.")
 
     def _update_robot_state(self):
-        """Reads current joint states from the arm and updates Placo."""
-        self.placo_robot.state.q[self.placo_arm_joint_slice] = self.arm_controller.get_joint_positions()[:6]
+        """Reads current joint states from the arms and updates Placo."""
+        for arm_name, controller in self.arm_controllers.items():
+            q_slice = self.placo_arm_joint_slice[arm_name]
+            self.placo_robot.state.q[q_slice] = controller.get_joint_positions()[:6]
 
     def _send_command(self):
         """Sends the solved joint targets to the hardware controllers."""
-        # The ARX R5 is controlled by a single "right_arm" entry in the config
-        if self.active.get("right_arm", False):
-            q_des = self.placo_robot.state.q[self.placo_arm_joint_slice].copy()
-            self.arm_controller.set_joint_positions(q_des)
+        for arm_name, controller in self.arm_controllers.items():
+            if self.active.get(arm_name, False):
+                q_des = self.placo_robot.state.q[self.placo_arm_joint_slice[arm_name]].copy()
+                controller.set_joint_positions(q_des)
 
-        # Handle gripper command
-        if "gripper_config" in self.end_effector_config["right_arm"]:
-            gripper_target = self.gripper_pos_target["right_arm"]["joint7"]
-            self.arm_controller.set_catch_pos(gripper_target)
-            print(f"Gripper position set to: {gripper_target}")
+            if "gripper_config" in self.end_effector_config[arm_name]:
+                gripper_config = self.end_effector_config[arm_name]["gripper_config"]
+                joint_name = gripper_config["joint_names"][0]  # Assume first joint is representative
+                gripper_target = self.gripper_pos_target[arm_name][joint_name]
+                controller.set_catch_pos(gripper_target)
 
     def _get_link_pose(self, link_name: str):
         """Gets the current world pose for a given link name from Placo."""
@@ -153,9 +200,16 @@ class ARXR5TeleopController(BaseTeleopController):
         timestamp = time.time() - self._start_time
         data_entry = {
             "timestamp": timestamp,
-            "qpos": self.arm_controller.get_joint_positions(),
-            "qvel": self.arm_controller.get_joint_velocities(),
-            "eef_pose": self.arm_controller.get_ee_pose(),
+            "qpos": {arm: c.get_joint_positions() for arm, c in self.arm_controllers.items()},
+            "qvel": {arm: c.get_joint_velocities() for arm, c in self.arm_controllers.items()},
+            "eef_pose": {arm: c.get_ee_pose() for arm, c in self.arm_controllers.items()},
+            "qpos_des": {
+                arm: self.placo_robot.state.q[self.placo_arm_joint_slice[arm]].copy() for arm in self.arm_controllers
+            },
+            "gripper_target": {
+                arm: self.gripper_pos_target[arm] if "gripper_config" in self.end_effector_config[arm] else None
+                for arm in self.arm_controllers
+            },
         }
 
         if self.camera_interface:
@@ -188,21 +242,9 @@ class ARXR5TeleopController(BaseTeleopController):
         while not stop_event.is_set():
             start_time = time.time()
             self._send_command()
-
-            # if self.visualize_placo:
-            #     ee_pose = self.arm_controller.get_ee_pose()[:3] + np.array(
-            #         [1.00200000e-01, 4.40784612e-07, 1.63500000e-01]
-            #     )
-
-            #     target_pose = self.effector_task["right_arm"].T_world_frame[:3, 3]
-            #     print(
-            #         f"Current EE Pose: {ee_pose}, Target Pose: {target_pose}, error: {np.linalg.norm(ee_pose - target_pose)}"
-            #     )
-
             elapsed_time = time.time() - start_time
             if elapsed_time < 1.0 / self.control_rate_hz:
                 time.sleep(1.0 / self.control_rate_hz - elapsed_time)
-
         print("Control loop has stopped.")
 
     def _data_logging_thread(self, stop_event: threading.Event):
@@ -213,7 +255,6 @@ class ARXR5TeleopController(BaseTeleopController):
             elapsed_time = time.time() - start_time
             if elapsed_time < 1.0 / self.log_freq:
                 time.sleep(1.0 / self.log_freq - elapsed_time)
-        self.data_logger.save()
         print("Data logging thread has stopped.")
 
     def _camera_thread(self, stop_event: threading.Event):
@@ -274,7 +315,8 @@ class ARXR5TeleopController(BaseTeleopController):
                     cv2.imshow(window_name, cv2.cvtColor(combined_image, cv2.COLOR_RGB2BGR))
 
                 # Process GUI events
-                cv2.waitKey(int(1000.0 / self.camera_interface.fps))
+                if cv2.waitKey(1) & 0xFF == ord("q"):
+                    break
         finally:
             self.camera_interface.stop()
             cv2.destroyAllWindows()
@@ -283,6 +325,7 @@ class ARXR5TeleopController(BaseTeleopController):
     def run(self):
         """Main entry point that starts all threads."""
         self._start_time = time.time()
+        self._stop_event = threading.Event()
         threads = []
 
         # Start core threads

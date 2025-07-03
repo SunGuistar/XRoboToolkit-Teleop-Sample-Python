@@ -15,7 +15,7 @@ def main():
         scale_factor=1.0,
         enable_camera=False,
         enable_log_data=False,
-        can_port="can1",
+        can_ports={"right_arm": "can1"},
         visualize_placo=True,
         control_rate_hz=50,
     )
