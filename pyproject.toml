@@ -23,6 +23,7 @@ dependencies = [
     "torch",
     "dex_retargeting",
     "pyrealsense2",
+    "opencv-python",
 ]
 
 [project.optional-dependencies]

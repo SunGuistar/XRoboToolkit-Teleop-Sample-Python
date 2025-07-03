@@ -17,7 +17,7 @@ def main():
     # )
 
     # 22 dof: all joints available
-    robot_urdf_path = os.path.join(ASSET_PATH, "X7S/X7S.urdf")
+    robot_urdf_path = os.path.join(ASSET_PATH, "arx/X7S/X7S.urdf")
 
     config = {
         "right_hand": {
