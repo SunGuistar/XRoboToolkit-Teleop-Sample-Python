@@ -106,7 +106,7 @@ elif [[ "$1" == "--install" ]]; then
     bash setup_ubuntu.sh
 
     cd ..
-    git clone https://github.com/XR-Robotics/R5.git
+    git clone https://github.com/zhigenzhao/R5.git
     cd R5
     git checkout dev/python_pkg
     cd py/ARX_R5_python/

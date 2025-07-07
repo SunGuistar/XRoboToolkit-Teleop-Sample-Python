@@ -20,8 +20,8 @@ DEFAULT_SCALE_FACTOR = 1.0
 CONTROLLER_DEADZONE = 0.1
 
 # Default camera configuration
-DEFAULT_LEFT_WRIST_CAM_SERIAL = "218622272014"
-DEFAULT_RIGHT_WRIST_CAM_SERIAL = "218622272499"
+DEFAULT_RIGHT_WRIST_CAM_SERIAL = "218622272014"
+DEFAULT_LEFT_WRIST_CAM_SERIAL = "218622272499"
 DEFAULT_BASE_CAM_SERIAL = "215222077461"
 
 CAM_SERIAL_DICT = {
@@ -101,24 +101,6 @@ class ARXR5TeleopController(BaseTeleopController):
     ):
         self.can_ports = can_ports
         self.control_rate_hz = control_rate_hz
-        super().__init__(
-            robot_urdf_path=robot_urdf_path,
-            end_effector_config=end_effector_config,
-            floating_base=False,
-            R_headset_world=R_headset_world,
-            scale_factor=scale_factor,
-            q_init=None,
-            dt=1.0 / control_rate_hz,
-            enable_log_data=enable_log_data,
-            log_dir=log_dir,
-            log_freq=log_freq,
-        )
-
-        self._start_time = 0
-
-        self.visualize_placo = visualize_placo
-        if self.visualize_placo:
-            self._init_placo_viz()
 
         # Initialize camera interface
         self.camera_interface = None
@@ -138,6 +120,28 @@ class ARXR5TeleopController(BaseTeleopController):
             except Exception as e:
                 print(f"Error initializing camera: {e}")
                 self.camera_interface = None
+
+        super().__init__(
+            robot_urdf_path=robot_urdf_path,
+            end_effector_config=end_effector_config,
+            floating_base=False,
+            R_headset_world=R_headset_world,
+            scale_factor=scale_factor,
+            q_init=None,
+            dt=1.0 / control_rate_hz,
+            enable_log_data=enable_log_data,
+            log_dir=log_dir,
+            log_freq=log_freq,
+        )
+
+        self._start_time = 0
+
+        self.visualize_placo = visualize_placo
+        if self.visualize_placo:
+            self._init_placo_viz()
+
+        self._prev_b_button_state = False
+        self._is_logging = False
 
     def _placo_setup(self):
         super()._placo_setup()
@@ -202,7 +206,6 @@ class ARXR5TeleopController(BaseTeleopController):
             "timestamp": timestamp,
             "qpos": {arm: c.get_joint_positions() for arm, c in self.arm_controllers.items()},
             "qvel": {arm: c.get_joint_velocities() for arm, c in self.arm_controllers.items()},
-            "eef_pose": {arm: c.get_ee_pose() for arm, c in self.arm_controllers.items()},
             "qpos_des": {
                 arm: self.placo_robot.state.q[self.placo_arm_joint_slice[arm]].copy() for arm in self.arm_controllers
             },
@@ -245,81 +248,122 @@ class ARXR5TeleopController(BaseTeleopController):
             elapsed_time = time.time() - start_time
             if elapsed_time < 1.0 / self.control_rate_hz:
                 time.sleep(1.0 / self.control_rate_hz - elapsed_time)
+
+        for _, controller in self.arm_controllers.items():
+            controller.go_home()
+        time.sleep(1)
         print("Control loop has stopped.")
 
     def _data_logging_thread(self, stop_event: threading.Event):
         """Dedicated thread for data logging."""
         while not stop_event.is_set():
             start_time = time.time()
-            self._log_data()
+            self._check_logging_button()
+            if self._is_logging:
+                self._log_data()
             elapsed_time = time.time() - start_time
             if elapsed_time < 1.0 / self.log_freq:
                 time.sleep(1.0 / self.log_freq - elapsed_time)
         print("Data logging thread has stopped.")
+
+    def _check_logging_button(self):
+        """Checks for the 'B' button press to toggle data logging."""
+        # Assuming 'b_button' is available from the right controller state
+        b_button_state = self.xr_client.get_button_state_by_name("B")
+        right_axis_click = self.xr_client.get_button_state_by_name("right_axis_click")
+
+        # Check for a rising edge (button pressed)
+        if b_button_state and not self._prev_b_button_state:
+            self._is_logging = not self._is_logging
+            if self._is_logging:
+                print("--- Started data logging ---")
+            else:
+                print("--- Stopped data logging. Saving data... ---")
+                self.data_logger.save()
+                self.data_logger.reset()
+
+        if right_axis_click and self._is_logging:
+            print("--- Stopped data logging. Discarding data... ---")
+            self.data_logger.reset()
+            self._is_logging = False
+
+        self._prev_b_button_state = b_button_state
 
     def _camera_thread(self, stop_event: threading.Event):
         """Dedicated thread for managing the camera lifecycle and streaming."""
         if not self.camera_interface:
             return
 
-        print("Camera streaming started.")
+        print("Camera thread started, waiting for logging to be enabled.")
         window_name = "RealSense Cameras"
-        cv2.namedWindow(window_name, cv2.WINDOW_AUTOSIZE)
+        window_created = False
 
         try:
             while not stop_event.is_set():
-                self.camera_interface.update_frames()
-                frames_dict = self.camera_interface.get_frames()
-                all_camera_rows = []
+                if self._is_logging:
+                    if not window_created:
+                        cv2.namedWindow(window_name, cv2.WINDOW_AUTOSIZE)
+                        window_created = True
 
-                # Use the configured camera dictionary to maintain a consistent order
-                for serial in self.camera_serial_dict.values():
-                    if serial not in frames_dict:
-                        continue
+                    self.camera_interface.update_frames()
+                    frames_dict = self.camera_interface.get_frames()
+                    all_camera_rows = []
 
-                    frames = frames_dict[serial]
-                    images_in_row = []
+                    # Use the configured camera dictionary to maintain a consistent order
+                    for serial in self.camera_serial_dict.values():
+                        if serial not in frames_dict:
+                            continue
 
-                    color_image = frames.get("color")
-                    if color_image is not None:
-                        # Ensure color image is 3-channel for stacking with colormap
-                        if len(color_image.shape) == 2:
-                            color_image = cv2.cvtColor(color_image, cv2.COLOR_GRAY2BGR)
-                        images_in_row.append(color_image)
+                        frames = frames_dict[serial]
+                        images_in_row = []
 
-                    depth_image = frames.get("depth")
-                    if depth_image is not None:
-                        depth_colormap = cv2.applyColorMap(
-                            cv2.convertScaleAbs(depth_image, alpha=0.03), cv2.COLORMAP_JET
-                        )
-                        images_in_row.append(depth_colormap)
+                        color_image = frames.get("color")
+                        if color_image is not None:
+                            # Ensure color image is 3-channel for stacking with colormap
+                            if len(color_image.shape) == 2:
+                                color_image = cv2.cvtColor(color_image, cv2.COLOR_GRAY2BGR)
+                            images_in_row.append(color_image)
 
-                    if images_in_row:
-                        all_camera_rows.append(np.hstack(images_in_row))
+                        depth_image = frames.get("depth")
+                        if depth_image is not None:
+                            depth_colormap = cv2.applyColorMap(
+                                cv2.convertScaleAbs(depth_image, alpha=0.03), cv2.COLORMAP_JET
+                            )
+                            images_in_row.append(depth_colormap)
 
-                if all_camera_rows:
-                    # Pad rows to the same width for vertical stacking
-                    max_width = max(row.shape[1] for row in all_camera_rows)
-                    padded_rows = []
-                    for row in all_camera_rows:
-                        if row.shape[1] < max_width:
-                            # Assuming 3 channels for color/colormap and consistent height
-                            padding = np.zeros((row.shape[0], max_width - row.shape[1], 3), dtype=np.uint8)
-                            padded_row = np.hstack([row, padding])
-                            padded_rows.append(padded_row)
-                        else:
-                            padded_rows.append(row)
+                        if images_in_row:
+                            all_camera_rows.append(np.hstack(images_in_row))
 
-                    # Vertically stack all camera rows into a single image
-                    combined_image = np.vstack(padded_rows)
-                    cv2.imshow(window_name, cv2.cvtColor(combined_image, cv2.COLOR_RGB2BGR))
+                    if all_camera_rows:
+                        # Pad rows to the same width for vertical stacking
+                        max_width = max(row.shape[1] for row in all_camera_rows)
+                        padded_rows = []
+                        for row in all_camera_rows:
+                            if row.shape[1] < max_width:
+                                # Assuming 3 channels for color/colormap and consistent height
+                                padding = np.zeros((row.shape[0], max_width - row.shape[1], 3), dtype=np.uint8)
+                                padded_row = np.hstack([row, padding])
+                                padded_rows.append(padded_row)
+                            else:
+                                padded_rows.append(row)
 
-                # Process GUI events
-                if cv2.waitKey(1) & 0xFF == ord("q"):
-                    break
+                        # Vertically stack all camera rows into a single image
+                        combined_image = np.vstack(padded_rows)
+                        cv2.imshow(window_name, cv2.cvtColor(combined_image, cv2.COLOR_RGB2BGR))
+
+                    # Process GUI events
+                    if cv2.waitKey(1) & 0xFF == ord("q"):
+                        break
+                else:
+                    if window_created:
+                        cv2.destroyWindow(window_name)
+                        window_created = False
+                    # Sleep to avoid busy-waiting when not logging
+                    time.sleep(0.1)
         finally:
             self.camera_interface.stop()
-            cv2.destroyAllWindows()
+            if window_created:
+                cv2.destroyAllWindows()
             print("Camera thread has stopped.")
 
     def run(self):

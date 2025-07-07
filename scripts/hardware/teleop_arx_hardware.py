@@ -12,11 +12,11 @@ def main():
     controller = ARXR5TeleopController(
         robot_urdf_path=DEFAULT_ARX_R5_URDF_PATH,
         end_effector_config=DEFAULT_ARX_R5_END_EFFECTOR_CONFIG,
-        scale_factor=1.0,
-        enable_camera=False,
-        enable_log_data=False,
-        can_ports={"right_arm": "can1"},
-        visualize_placo=True,
+        scale_factor=1.5,
+        enable_camera=True,
+        enable_log_data=True,
+        can_ports={"right_arm": "can3"},
+        visualize_placo=False,
         control_rate_hz=50,
     )
     controller.run()
