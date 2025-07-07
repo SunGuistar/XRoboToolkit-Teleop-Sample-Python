@@ -105,7 +105,14 @@ elif [[ "$1" == "--install" ]]; then
     cd XRoboToolkit-PC-Service-Pybind
     bash setup_ubuntu.sh
 
-    cd ../..
+    cd ..
+    git clone https://github.com/zhigenzhao/R5.git
+    cd R5
+    git checkout dev/python_pkg
+    cd py/ARX_R5_python/
+    pip install .
+
+    cd ../../../..
 
     pip install -e . || { echo "Failed to install xrobotoolkit_teleop with pip"; exit 1; }
 

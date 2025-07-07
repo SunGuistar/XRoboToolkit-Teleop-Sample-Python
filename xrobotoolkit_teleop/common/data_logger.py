@@ -37,7 +37,7 @@ class DataLogger:
         if not self.log_data:
             print("No data to save.")
             return
-
+        self.count += 1
         self.log_file = os.path.join(self.log_dir, f"teleop_log_{self.timestamp}_{self.count}.pkl")
 
         print(f"Saving {len(self.log_data)} data points to {self.log_file}...")
@@ -54,5 +54,5 @@ class DataLogger:
         """
         self.log_data = []
         self.log_file = None
-        self.count += 1
+
         print("Logger has been reset.")
