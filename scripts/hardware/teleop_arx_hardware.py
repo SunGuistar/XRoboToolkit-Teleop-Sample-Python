@@ -18,6 +18,7 @@ def main():
         can_ports={"right_arm": "can3"},
         visualize_placo=False,
         control_rate_hz=50,
+        log_dir="logs/arx_r5",
     )
     controller.run()
 

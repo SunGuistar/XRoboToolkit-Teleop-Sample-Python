@@ -45,7 +45,7 @@ DEFAULT_ARX_R5_END_EFFECTOR_CONFIG = {
             "type": "parallel",
             "gripper_trigger": "right_trigger",
             "joint_names": ["joint7"],
-            "open_pos": [5.0],
+            "open_pos": [4.9],
             "close_pos": [0.0],
         },
     },
@@ -60,7 +60,7 @@ DEFAULT_DUAL_ARX_R5_END_EFFECTOR_CONFIG = {
             "type": "parallel",
             "gripper_trigger": "right_trigger",
             "joint_names": ["right_joint7"],
-            "open_pos": [5.0],
+            "open_pos": [4.9],
             "close_pos": [0.0],
         },
     },
@@ -72,7 +72,7 @@ DEFAULT_DUAL_ARX_R5_END_EFFECTOR_CONFIG = {
             "type": "parallel",
             "gripper_trigger": "left_trigger",
             "joint_names": ["left_joint7"],
-            "open_pos": [5.0],
+            "open_pos": [4.9],
             "close_pos": [0.0],
         },
     },
@@ -210,7 +210,7 @@ class ARXR5TeleopController(BaseTeleopController):
                 arm: self.placo_robot.state.q[self.placo_arm_joint_slice[arm]].copy() for arm in self.arm_controllers
             },
             "gripper_target": {
-                arm: self.gripper_pos_target[arm] if "gripper_config" in self.end_effector_config[arm] else None
+                arm: self.gripper_pos_target[arm].copy() if "gripper_config" in self.end_effector_config[arm] else None
                 for arm in self.arm_controllers
             },
         }
