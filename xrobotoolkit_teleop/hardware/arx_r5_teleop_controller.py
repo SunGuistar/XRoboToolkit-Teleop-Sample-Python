@@ -105,6 +105,7 @@ class ARXR5TeleopController(BaseTeleopController):
         # Initialize camera interface
         self.camera_interface = None
         self.camera_serial_dict = camera_serial_dict
+        self.enable_camera = enable_camera
         if enable_camera:
             print("Initializing camera...")
             try:
@@ -215,7 +216,7 @@ class ARXR5TeleopController(BaseTeleopController):
             },
         }
 
-        if self.camera_interface:
+        if self.enable_camera:
             cam_dict = {}
             frames = self.camera_interface.get_frames()
             for name, serial in self.camera_serial_dict.items():

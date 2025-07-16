@@ -115,7 +115,7 @@ class BaseTeleopController(abc.ABC):
 
         self.solver = placo.KinematicsSolver(self.placo_robot)
         self.solver.dt = self.dt
-        self.solver.add_kinetic_energy_regularization_task(1e-6)
+        # self.solver.add_kinetic_energy_regularization_task(1e-6)
 
         # Set initial configuration
         if self.q_init is not None:
@@ -139,7 +139,7 @@ class BaseTeleopController(abc.ABC):
             self.effector_task[name] = self.solver.add_frame_task(config["link_name"], ee_target)
             self.effector_task[name].configure(name, "soft", 1.0)
             manipulability = self.solver.add_manipulability_task(config["link_name"], "both", 1.0)
-            manipulability.configure("manipulability", "soft", 5e-2)
+            manipulability.configure("manipulability", "soft", 1e-2)
 
         self.placo_robot.update_kinematics()
 
