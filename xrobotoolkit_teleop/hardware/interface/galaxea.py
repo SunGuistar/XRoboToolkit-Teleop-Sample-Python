@@ -99,6 +99,14 @@ class A1XController:
 
         self.gripper_pub.publish(self.gripper_ctrl_msg)
 
+    def stop(self):
+        """
+        Unregisters the ROS publishers and subscribers.
+        """
+        self.pub.unregister()
+        self.gripper_pub.unregister()
+        self.sub.unregister()
+
 
 class R1LiteChassisController:
     def __init__(
@@ -242,3 +250,10 @@ class R1LiteTorsoController:
         self.twist_stamped_cmd.twist.angular.x = 0.0
         self.twist_stamped_cmd.twist.angular.y = 0.0
         self.twist_stamped_cmd.twist.angular.z = 0.0
+
+    def stop_torso(self):
+        """
+        Stop the torso by setting all velocities to zero.
+        """
+        self.set_velocity_command(0.0)
+        self.publish_torso_control()

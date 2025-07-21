@@ -1,14 +1,12 @@
 import os
-import threading
-import time
 from typing import Dict
 
-import cv2
-import meshcat.transformations as tf
 import numpy as np
 import rospy
 
-from xrobotoolkit_teleop.common.base_teleop_controller import BaseTeleopController
+from xrobotoolkit_teleop.common.base_hardware_teleop_controller import (
+    HardwareTeleopController,
+)
 from xrobotoolkit_teleop.hardware.interface.galaxea import (
     A1XController,
     R1LiteChassisController,
@@ -66,7 +64,7 @@ DEFAULT_END_EFFECTOR_CONFIG = {
 }
 
 
-class GalaxeaR1LiteTeleopController(BaseTeleopController):
+class GalaxeaR1LiteTeleopController(HardwareTeleopController):
     def __init__(
         self,
         robot_urdf_path: str = DEFAULT_DUAL_A1X_URDF_PATH,
@@ -85,54 +83,18 @@ class GalaxeaR1LiteTeleopController(BaseTeleopController):
         super().__init__(
             robot_urdf_path=robot_urdf_path,
             end_effector_config=end_effector_config,
-            floating_base=False,
             R_headset_world=R_headset_world,
+            floating_base=False,
             scale_factor=scale_factor,
-            q_init=None,
-            dt=1.0 / control_rate_hz,
+            visualize_placo=visualize_placo,
+            control_rate_hz=control_rate_hz,
             enable_log_data=enable_log_data,
             log_dir=log_dir,
             log_freq=log_freq,
+            enable_camera=enable_camera,
+            camera_fps=camera_fps,
         )
-
-        self._start_time = 0
-        self.control_rate_hz = control_rate_hz
-        self.log_freq = log_freq
-        self.visualize_placo = visualize_placo
         self.chassis_velocity_scale = chassis_velocity_scale
-        self.enable_camera = enable_camera
-        self.camera_interface = None
-        self.camera_fps = camera_fps
-
-        if self.enable_camera:
-            print("Initializing camera...")
-            try:
-                camera_topics = {
-                    # "left": {
-                    #     "color": "/hdas/camera_wrist_left/color/image_raw/compressed",
-                    # },
-                    # "right": {
-                    #     "color": "/hdas/camera_wrist_right/color/image_raw/compressed",
-                    # },
-                    "head_left": {
-                        "color": "/hdas/camera_head/left_raw/image_raw_color/compressed",
-                    },
-                    "head_right": {
-                        "color": "/hdas/camera_head/right_raw/image_raw_color/compressed",
-                    },
-                }
-                self.camera_interface = RosCameraInterface(camera_topics=camera_topics)
-                self.camera_interface.start()
-                print("Camera initialized successfully.")
-            except Exception as e:
-                print(f"Error initializing camera: {e}")
-                self.enable_camera = False
-
-        if self.visualize_placo:
-            self._init_placo_viz()
-
-        self._prev_b_button_state = False
-        self._is_logging = False
 
     def _placo_setup(self):
         super()._placo_setup()
@@ -194,6 +156,33 @@ class GalaxeaR1LiteTeleopController(BaseTeleopController):
             rospy.sleep(0.1)
         print("Torso controller received initial state.")
 
+    def _initialize_camera(self):
+        if self.enable_camera:
+            print("Initializing camera...")
+            try:
+                camera_topics = {
+                    "left": {
+                        "color": "/hdas/camera_wrist_left/color/image_raw/compressed",
+                        # "depth": "/hdas/camera_wrist_left/aligned_depth_to_color/image_raw",
+                    },
+                    "right": {
+                        "color": "/hdas/camera_wrist_right/color/image_raw/compressed",
+                        # "depth": "/hdas/camera_wrist_right/aligned_depth_to_color/image_raw",
+                    },
+                    "head_left": {
+                        "color": "/hdas/camera_head/left_raw/image_raw_color/compressed",
+                    },
+                    "head_right": {
+                        "color": "/hdas/camera_head/right_raw/image_raw_color/compressed",
+                    },
+                }
+                self.camera_interface = RosCameraInterface(camera_topics=camera_topics)
+                self.camera_interface.start()
+                print("Camera initialized successfully.")
+            except Exception as e:
+                print(f"Error initializing camera: {e}")
+                self.enable_camera = False
+
     def _update_robot_state(self):
         """Reads current joint states from both arm controllers and updates Placo."""
         for arm_name, controller in self.arm_controllers.items():
@@ -205,7 +194,6 @@ class GalaxeaR1LiteTeleopController(BaseTeleopController):
             if self.active.get(arm_name, False):
                 controller.q_des = self.placo_robot.state.q[self.placo_arm_joint_slice[arm_name]].copy()
 
-            # R1 Lite always has gripper config for both arms
             controller.q_des_gripper = [
                 self.gripper_pos_target[arm_name][gripper_joint]
                 for gripper_joint in self.gripper_pos_target[arm_name].keys()
@@ -217,13 +205,18 @@ class GalaxeaR1LiteTeleopController(BaseTeleopController):
         self.chassis_controller.publish_chassis_control()
         self.torso_controller.publish_torso_control()
 
+    def _pre_ik_update(self):
+        """Updates the chassis and torso velocity commands based on joystick input."""
+        self._update_joystick_velocity_command()
+        self._update_torso_velocity_command()
+
     def _update_joystick_velocity_command(self):
         """Updates the chassis velocity commands based on joystick input."""
         left_axis = self.xr_client.get_joystick_state("left")
         right_axis = self.xr_client.get_joystick_state("right")
 
         vx = left_axis[1] * self.chassis_velocity_scale[0]
-        vy = left_axis[0] * self.chassis_velocity_scale[1]
+        vy = -left_axis[0] * self.chassis_velocity_scale[1]
         omega = -right_axis[0] * self.chassis_velocity_scale[2]
 
         self.chassis_controller.set_velocity_command(vx, vy, omega)
@@ -235,198 +228,26 @@ class GalaxeaR1LiteTeleopController(BaseTeleopController):
         vz = 2.5 if buttonY else -2.5 if buttonX else 0.0
         self.torso_controller.set_velocity_command(vz)
 
-    def _get_link_pose(self, link_name: str):
-        """Gets the current world pose for a given link name from Placo."""
-        T_world_link = self.placo_robot.get_T_world_frame(link_name)
-        pos = T_world_link[:3, 3]
-        quat = tf.quaternion_from_matrix(T_world_link)
-        return pos, quat
+    def _get_robot_state_for_logging(self) -> Dict:
+        """Returns a dictionary of robot-specific data for logging."""
+        return {
+            "qpos": {arm: controller.qpos for arm, controller in self.arm_controllers.items()},
+            "qvel": {arm: controller.qvel for arm, controller in self.arm_controllers.items()},
+            "qpos_des": {arm: controller.q_des for arm, controller in self.arm_controllers.items()},
+            "gripper_qpos": {arm: controller.qpos_gripper for arm, controller in self.arm_controllers.items()},
+            "gripper_qpos_des": {arm: controller.q_des_gripper for arm, controller in self.arm_controllers.items()},
+        }
 
-    def _log_data(self):
-        if self.enable_log_data:
-            timestamp = time.time() - self._start_time
-            data_entry = {
-                "timestamp": timestamp,
-                "qpos": {arm: controller.qpos for arm, controller in self.arm_controllers.items()},
-                "qvel": {arm: controller.qvel for arm, controller in self.arm_controllers.items()},
-                "qpos_des": {arm: controller.q_des for arm, controller in self.arm_controllers.items()},
-                "gripper_qpos": {arm: controller.qpos_gripper for arm, controller in self.arm_controllers.items()},
-                "gripper_qpos_des": {arm: controller.q_des_gripper for arm, controller in self.arm_controllers.items()},
-            }
-            if self.enable_camera and self.camera_interface:
-                data_entry["image"] = self.camera_interface.get_frames()
-            self.data_logger.add_entry(data_entry)
+    def _should_keep_running(self) -> bool:
+        """Returns True if the main loop should continue running."""
+        return super()._should_keep_running() and not rospy.is_shutdown()
 
-    def _ik_thread(self, stop_event: threading.Event):
-        """Dedicated thread for running the IK solver."""
-        while not stop_event.is_set():
-            start_time = time.time()
-            self._update_robot_state()
-            self._update_gripper_target()
-            self._update_joystick_velocity_command()
-            self._update_torso_velocity_command()
-            self._update_ik()
-            if self.visualize_placo:
-                self._update_placo_viz()
-            elapsed_time = time.time() - start_time
-            if elapsed_time < 1.0 / self.control_rate_hz:
-                time.sleep(1.0 / self.control_rate_hz - elapsed_time)
-        print("IK loop has stopped.")
-
-    def _control_thread(self, stop_event: threading.Event):
-        """Dedicated thread for sending commands to hardware."""
-        while not stop_event.is_set():
-            start_time = time.time()
-            self._send_command()
-            elapsed_time = time.time() - start_time
-            if elapsed_time < 1.0 / self.control_rate_hz:
-                time.sleep(1.0 / self.control_rate_hz - elapsed_time)
+    def _shutdown_robot(self):
+        """Performs graceful shutdown of the robot hardware."""
+        for arm_controller in self.arm_controllers.values():
+            arm_controller.stop()
+        print("Arm controllers stopped.")
+        self.torso_controller.stop_torso()
+        print("Torso stopped.")
         self.chassis_controller.stop_chassis()
-        print("Control loop has stopped.")
-
-    def _data_logging_thread(self, stop_event: threading.Event):
-        """Dedicated thread for data logging."""
-        while not stop_event.is_set():
-            start_time = time.time()
-            self._check_logging_button()
-            if self._is_logging:
-                self._log_data()
-            elapsed_time = time.time() - start_time
-            if elapsed_time < 1.0 / self.log_freq:
-                time.sleep(1.0 / self.log_freq - elapsed_time)
-        print("Data logging thread has stopped.")
-
-    def _check_logging_button(self):
-        """Checks for the 'B' button press to toggle data logging."""
-        b_button_state = self.xr_client.get_button_state_by_name("B")
-        right_axis_click = self.xr_client.get_button_state_by_name("right_axis_click")
-
-        # Check for a rising edge (button pressed)
-        if b_button_state and not self._prev_b_button_state:
-            self._is_logging = not self._is_logging
-            if self._is_logging:
-                print("--- Started data logging ---")
-            else:
-                print("--- Stopped data logging. Saving data... ---")
-                self.data_logger.save()
-                self.data_logger.reset()
-
-        if right_axis_click and self._is_logging:
-            print("--- Stopped data logging. Discarding data... ---")
-            self.data_logger.reset()
-            self._is_logging = False
-
-        self._prev_b_button_state = b_button_state
-
-    def _camera_thread(self, stop_event: threading.Event):
-        """Dedicated thread for managing the camera lifecycle and streaming."""
-        if not self.camera_interface:
-            return
-
-        print("Camera thread started, waiting for logging to be enabled.")
-        window_name = "ROS Cameras"
-        window_created = False
-
-        try:
-            while not stop_event.is_set():
-                self.camera_interface.update_frames()  # This is a no-op for ROS, but good for consistency
-                if self._is_logging:
-                    if not window_created:
-                        cv2.namedWindow(window_name, cv2.WINDOW_AUTOSIZE)
-                        window_created = True
-
-                    frames_dict = self.camera_interface.get_frames()
-                    all_camera_rows = []
-
-                    # Use the configured camera dictionary to maintain a consistent order
-                    for name in self.camera_interface.camera_topics.keys():
-                        if name not in frames_dict:
-                            continue
-
-                        frames = frames_dict[name]
-                        images_in_row = []
-
-                        color_image = frames.get("color")
-                        if color_image is not None:
-                            # Ensure color image is 3-channel for stacking with colormap
-                            if len(color_image.shape) == 2:
-                                color_image = cv2.cvtColor(color_image, cv2.COLOR_GRAY2BGR)
-                            images_in_row.append(color_image)
-
-                        depth_image = frames.get("depth")
-                        if depth_image is not None:
-                            depth_colormap = cv2.applyColorMap(
-                                cv2.convertScaleAbs(depth_image, alpha=0.03), cv2.COLORMAP_JET
-                            )
-                            images_in_row.append(depth_colormap)
-
-                        if images_in_row:
-                            all_camera_rows.append(np.hstack(images_in_row))
-
-                    if all_camera_rows:
-                        # Pad rows to the same width for vertical stacking
-                        max_width = max(row.shape[1] for row in all_camera_rows)
-                        padded_rows = []
-                        for row in all_camera_rows:
-                            if row.shape[1] < max_width:
-                                # Assuming 3 channels for color/colormap and consistent height
-                                padding = np.zeros((row.shape[0], max_width - row.shape[1], 3), dtype=np.uint8)
-                                padded_row = np.hstack([row, padding])
-                                padded_rows.append(padded_row)
-                            else:
-                                padded_rows.append(row)
-
-                        # Vertically stack all camera rows into a single image
-                        if padded_rows:
-                            combined_image = np.vstack(padded_rows)
-                            cv2.imshow(window_name, combined_image)
-
-                    if cv2.waitKey(1) & 0xFF == ord("q"):
-                        break
-                else:
-                    if window_created:
-                        cv2.destroyWindow(window_name)
-                        window_created = False
-                    time.sleep(1.0 / self.camera_fps)
-
-        finally:
-            self.camera_interface.stop()
-            if window_created:
-                cv2.destroyAllWindows()
-            print("Camera thread has stopped.")
-
-    def run(self):
-        """Main entry point that starts all threads."""
-        self._start_time = time.time()
-        self._stop_event = threading.Event()
-        threads = []
-
-        # Start core threads
-        ik_thread = threading.Thread(target=self._ik_thread, args=(self._stop_event,))
-        control_thread = threading.Thread(target=self._control_thread, args=(self._stop_event,))
-        threads.extend([ik_thread, control_thread])
-
-        # Start optional threads
-        if self.enable_log_data:
-            log_thread = threading.Thread(target=self._data_logging_thread, args=(self._stop_event,))
-            threads.append(log_thread)
-        if self.camera_interface:
-            camera_thread = threading.Thread(target=self._camera_thread, args=(self._stop_event,))
-            threads.append(camera_thread)
-
-        for t in threads:
-            t.daemon = True
-            t.start()
-
-        print("R1 Lite dual-arm teleoperation running. Press Ctrl+C to exit.")
-        try:
-            while not self._stop_event.is_set() and not rospy.is_shutdown():
-                time.sleep(0.1)
-        except KeyboardInterrupt:
-            print("\nKeyboard interrupt received.")
-        finally:
-            print("Shutting down...")
-            self._stop_event.set()
-            for t in threads:
-                t.join(timeout=2.0)
-            print("All threads have been shut down.")
+        print("Chassis stopped.")
