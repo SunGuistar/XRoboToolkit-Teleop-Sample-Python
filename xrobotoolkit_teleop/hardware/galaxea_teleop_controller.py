@@ -65,7 +65,7 @@ DEFAULT_DUAL_END_EFFECTOR_CONFIG = {
                 "right_gripper_finger_joint1",
             ],
             "open_pos": [
-                -2.0,
+                -2.83,
             ],
             "close_pos": [
                 0.0,
@@ -83,7 +83,7 @@ DEFAULT_DUAL_END_EFFECTOR_CONFIG = {
                 "left_gripper_finger_joint1",
             ],
             "open_pos": [
-                -2.0,
+                -2.83,
             ],
             "close_pos": [
                 0.0,

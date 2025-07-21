@@ -1,28 +1,28 @@
-import argparse
 import threading
 import time
 
+import tyro
 from xrobotoolkit_teleop.common.xr_client import XrClient
 from xrobotoolkit_teleop.hardware.dual_arm_ur_controller import DualArmURController
 from xrobotoolkit_teleop.hardware.dynamixel_head_controller import DynamixelHeadController
 
 
-def main():
-    parser = argparse.ArgumentParser(description="Run head and dual arm teleoperation control.")
-    parser.add_argument(
-        "--reset",
-        action="store_true",
-        help="Run the reset procedure for the dual arm controller.",
-    )
-    parser.add_argument("--visualize_placo", action="store_true", help="Visualize Placo in the arm controller.")
+def main(
+    reset: bool = False,
+    visualize_placo: bool = False,
+):
+    """
+    Run head and dual arm teleoperation control.
 
-    args = parser.parse_args()
-
+    Args:
+        reset: Run the reset procedure for the dual arm controller.
+        visualize_placo: Visualize Placo in the arm controller.
+    """
     xr_client = XrClient()
     head_controller = DynamixelHeadController(xr_client)
-    arm_controller = DualArmURController(xr_client, visualize_placo=args.visualize_placo)
+    arm_controller = DualArmURController(xr_client, visualize_placo=visualize_placo)
 
-    if args.reset:
+    if reset:
         print("Reset flag detected. Running arm controller reset procedure...")
         try:
             arm_controller.reset()
@@ -75,4 +75,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    tyro.cli(main)

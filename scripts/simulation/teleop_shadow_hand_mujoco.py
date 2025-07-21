@@ -3,6 +3,7 @@ import os
 import mujoco
 import numpy as np
 import pinocchio as pin
+import tyro
 from dex_retargeting.constants import HandType, RetargetingType, RobotName
 from mujoco import viewer as mj_viewer
 
@@ -12,19 +13,28 @@ from xrobotoolkit_teleop.utils.mujoco_utils import calc_mujoco_ctrl_from_qpos, c
 from xrobotoolkit_teleop.utils.path_utils import ASSET_PATH
 
 
-def main():
-    urdf_path = os.path.join(ASSET_PATH, "shadow_hand/shadow_hand_right.urdf")
-    xml_path = os.path.join(ASSET_PATH, "shadow_hand/xml/scene_right.xml")
+def main(
+    urdf_path: str = os.path.join(ASSET_PATH, "shadow_hand/shadow_hand_right.urdf"),
+    xml_path: str = os.path.join(ASSET_PATH, "shadow_hand/xml/scene_right.xml"),
+    hand_type: str = "right",
+):
+    """
+    Main function to run the Shadow hand teleoperation with MuJoCo.
+    """
+    if hand_type not in ["left", "right"]:
+        raise ValueError("hand_type must be 'left' or 'right'")
 
     mj_model = mujoco.MjModel.from_xml_path(xml_path)
     mj_data = mujoco.MjData(mj_model)
     pin_model = pin.buildModelFromUrdf(urdf_path)
 
     xr_client = XrClient()
+
+    dextracker_hand_type = HandType.left if hand_type == "left" else HandType.right
     dextracker = DexHandTracker(
         robot_name=RobotName.shadow,
         urdf_path=urdf_path,
-        hand_type=HandType.right,
+        hand_type=dextracker_hand_type,
         retargeting_type=RetargetingType.vector,
     )
     with mj_viewer.launch_passive(mj_model, mj_data) as viewer:
@@ -35,8 +45,8 @@ def main():
         viewer.cam.lookat = [0.2, 0, 0.2]
 
         while True:
-            right_hand_state = np.array(xr_client.get_hand_tracking_state("right"))
-            mediapipe_hand_state = pico_hand_state_to_mediapipe(right_hand_state)
+            hand_state = np.array(xr_client.get_hand_tracking_state(hand_type))
+            mediapipe_hand_state = pico_hand_state_to_mediapipe(hand_state)
             pin_q = dextracker.retarget(mediapipe_hand_state)
             mj_qpos = calc_mujoco_qpos_from_pin_q(mj_model, pin_model, pin_q)
             mj_ctrl = calc_mujoco_ctrl_from_qpos(mj_model, mj_qpos)
@@ -46,4 +56,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    tyro.cli(main)

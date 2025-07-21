@@ -1,24 +1,19 @@
 import os
 
+import tyro
 from xrobotoolkit_teleop.simulation.placo_teleop_controller import (
     PlacoTeleopController,
 )
 from xrobotoolkit_teleop.utils.path_utils import ASSET_PATH
 
 
-def main():
-
-    # 14 dof: only arms
-    # robot_urdf_path = os.path.join(ASSET_PATH, "X7S/X7S_arm_only.urdf")
-
-    # 17 dof: 2 arms, body tilting (joint2), head (joint3 and joint4)
-    # robot_urdf_path = os.path.join(
-    #     ASSET_PATH, "X7S/X7S_fixed_vertical_no_gripper.urdf"
-    # )
-
-    # 22 dof: all joints available
-    robot_urdf_path = os.path.join(ASSET_PATH, "arx/X7S/X7S.urdf")
-
+def main(
+    robot_urdf_path: str = os.path.join(ASSET_PATH, "arx/X7S/X7S.urdf"),
+    scale_factor: float = 1.5,
+):
+    """
+    Main function to run the X7S teleoperation with Placo.
+    """
     config = {
         "right_hand": {
             "link_name": "link20",
@@ -36,7 +31,7 @@ def main():
     controller = PlacoTeleopController(
         robot_urdf_path=robot_urdf_path,
         end_effector_config=config,
-        scale_factor=1.5,
+        scale_factor=scale_factor,
     )
 
     # additional constraints hardcoded here for now
@@ -52,4 +47,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    tyro.cli(main)

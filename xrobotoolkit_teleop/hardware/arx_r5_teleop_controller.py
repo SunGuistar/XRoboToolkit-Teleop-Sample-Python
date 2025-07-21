@@ -105,6 +105,7 @@ class ARXR5TeleopController(BaseTeleopController):
         # Initialize camera interface
         self.camera_interface = None
         self.camera_serial_dict = camera_serial_dict
+        self.enable_camera = enable_camera
         if enable_camera:
             print("Initializing camera...")
             try:
@@ -215,7 +216,7 @@ class ARXR5TeleopController(BaseTeleopController):
             },
         }
 
-        if self.camera_interface:
+        if self.enable_camera:
             cam_dict = {}
             frames = self.camera_interface.get_frames()
             for name, serial in self.camera_serial_dict.items():
@@ -300,12 +301,12 @@ class ARXR5TeleopController(BaseTeleopController):
 
         try:
             while not stop_event.is_set():
+                self.camera_interface.update_frames()
                 if self._is_logging:
                     if not window_created:
                         cv2.namedWindow(window_name, cv2.WINDOW_AUTOSIZE)
                         window_created = True
 
-                    self.camera_interface.update_frames()
                     frames_dict = self.camera_interface.get_frames()
                     all_camera_rows = []
 
@@ -351,15 +352,13 @@ class ARXR5TeleopController(BaseTeleopController):
                         combined_image = np.vstack(padded_rows)
                         cv2.imshow(window_name, cv2.cvtColor(combined_image, cv2.COLOR_RGB2BGR))
 
-                    # Process GUI events
-                    if cv2.waitKey(1) & 0xFF == ord("q"):
-                        break
+                    cv2.waitKey(int(1000.0 / self.camera_interface.fps))
                 else:
                     if window_created:
                         cv2.destroyWindow(window_name)
                         window_created = False
-                    # Sleep to avoid busy-waiting when not logging
-                    time.sleep(0.1)
+                    time.sleep(1.0 / self.camera_interface.fps)
+
         finally:
             self.camera_interface.stop()
             if window_created:

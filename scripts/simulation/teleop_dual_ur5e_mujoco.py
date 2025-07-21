@@ -1,15 +1,21 @@
 import os
 
+import tyro
 from xrobotoolkit_teleop.simulation.mujoco_teleop_controller import (
     MujocoTeleopController,
 )
 from xrobotoolkit_teleop.utils.path_utils import ASSET_PATH
 
 
-def main():
-    xml_path = os.path.join(ASSET_PATH, "universal_robots_ur5e/scene_dual_arm.xml")
-    robot_urdf_path = os.path.join(ASSET_PATH, "universal_robots_ur5e/dual_ur5e.urdf")
-
+def main(
+    xml_path: str = os.path.join(ASSET_PATH, "universal_robots_ur5e/scene_dual_arm.xml"),
+    robot_urdf_path: str = os.path.join(ASSET_PATH, "universal_robots_ur5e/dual_ur5e.urdf"),
+    scale_factor: float = 1.5,
+    visualize_placo: bool = True,
+):
+    """
+    Main function to run the dual UR5e teleoperation in MuJoCo.
+    """
     config = {
         "right_hand": {
             "link_name": "right_tool0",
@@ -30,8 +36,8 @@ def main():
         xml_path=xml_path,
         robot_urdf_path=robot_urdf_path,
         end_effector_config=config,
-        scale_factor=1.5,
-        visualize_placo=True,
+        scale_factor=scale_factor,
+        visualize_placo=visualize_placo,
     )
 
     # additional constraints hardcoded here for now
@@ -43,4 +49,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    tyro.cli(main)

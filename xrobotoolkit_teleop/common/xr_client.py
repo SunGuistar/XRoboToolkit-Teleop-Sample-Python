@@ -86,5 +86,17 @@ class XrClient:
         else:
             raise ValueError(f"Invalid hand: {hand}. Valid hands are: 'left', 'right'.")
 
+    def get_joystick_state(self, controller: str) -> list[float]:
+        """Returns the joystick state for the specified controller.
+        Valid controllers: "left", "right".
+        State is a list with shape (2) representing [x, y] for each joystick.
+        """
+        if controller.lower() == "left":
+            return xrt.get_left_axis()
+        elif controller.lower() == "right":
+            return xrt.get_right_axis()
+        else:
+            raise ValueError(f"Invalid controller: {controller}. Valid controllers are: 'left', 'right'.")
+
     def close(self):
         xrt.close()
