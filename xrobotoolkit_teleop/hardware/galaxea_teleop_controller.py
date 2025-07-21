@@ -101,7 +101,7 @@ class GalaxeaA1XTeleopController(BaseTeleopController):
         R_headset_world: np.ndarray = R_HEADSET_TO_WORLD,
         scale_factor: float = DEFAULT_SCALE_FACTOR,
         visualize_placo: bool = False,
-        ros_rate_hz: int = 100,
+        control_rate_hz: int = 100,
         enable_log_data: bool = True,
         log_dir: str = "logs/galaxea",
         log_freq: float = 50,
@@ -112,28 +112,13 @@ class GalaxeaA1XTeleopController(BaseTeleopController):
         camera_fps: int = 60,
         enable_camera_depth: bool = False,
     ):
-        super().__init__(
-            robot_urdf_path=robot_urdf_path,
-            end_effector_config=end_effector_config,
-            floating_base=False,
-            R_headset_world=R_headset_world,
-            scale_factor=scale_factor,
-            q_init=None,
-            dt=1.0 / ros_rate_hz,
-            enable_log_data=enable_log_data,
-            log_dir=log_dir,
-            log_freq=log_freq,
-        )
+        self.control_rate_hz = control_rate_hz
+        self.log_freq = log_freq
 
-        self._start_time = 0
-
-        self.ros_rate_hz = ros_rate_hz
-        self.visualize_placo = visualize_placo
-        if self.visualize_placo:
-            self._init_placo_viz()
-
+        # Initialize camera interface
         self.camera_interface = None
         self.camera_serial_dict = camera_serial_dict
+        self.enable_camera = enable_camera
         if enable_camera:
             print("Initializing camera...")
             try:
@@ -141,15 +126,33 @@ class GalaxeaA1XTeleopController(BaseTeleopController):
                     width=camera_width,
                     height=camera_height,
                     fps=camera_fps,
-                    serial_numbers=camera_serial_dict.values(),
+                    serial_numbers=list(camera_serial_dict.values()),
                     enable_depth=enable_camera_depth,
                 )
                 self.camera_interface.start()
-                self.camera_interface.update_frames()
                 print("Camera initialized successfully.")
             except Exception as e:
                 print(f"Error initializing camera: {e}")
                 self.camera_interface = None
+
+        super().__init__(
+            robot_urdf_path=robot_urdf_path,
+            end_effector_config=end_effector_config,
+            floating_base=False,
+            R_headset_world=R_headset_world,
+            scale_factor=scale_factor,
+            q_init=None,
+            dt=1.0 / control_rate_hz,
+            enable_log_data=enable_log_data,
+            log_dir=log_dir,
+            log_freq=log_freq,
+        )
+
+        self._start_time = 0
+
+        self.visualize_placo = visualize_placo
+        if self.visualize_placo:
+            self._init_placo_viz()
 
         self._prev_b_button_state = False
         self._is_logging = False
@@ -244,34 +247,38 @@ class GalaxeaA1XTeleopController(BaseTeleopController):
 
     def _ik_thread(self, stop_event: threading.Event):
         """Dedicated thread for running the IK solver."""
-        rate = rospy.Rate(1.0 / self.dt)
         while not stop_event.is_set():
+            start_time = time.time()
             self._update_robot_state()
             self._update_gripper_target()
             self._update_ik()
             if self.visualize_placo:
                 self._update_placo_viz()
-            rate.sleep()
+            elapsed_time = time.time() - start_time
+            if elapsed_time < 1.0 / self.control_rate_hz:
+                time.sleep(1.0 / self.control_rate_hz - elapsed_time)
         print("IK loop has stopped.")
 
     def _control_thread(self, stop_event: threading.Event):
         """Dedicated thread for sending commands to hardware."""
-        rate = rospy.Rate(self.ros_rate_hz)  # High-frequency control loop
         while not stop_event.is_set():
+            start_time = time.time()
             self._send_command()
-            rate.sleep()
+            elapsed_time = time.time() - start_time
+            if elapsed_time < 1.0 / self.control_rate_hz:
+                time.sleep(1.0 / self.control_rate_hz - elapsed_time)
         print("Control loop has stopped.")
 
     def _data_logging_thread(self, stop_event: threading.Event):
-        rate = rospy.Rate(self.log_freq)
+        """Dedicated thread for data logging."""
         while not stop_event.is_set():
-            if self.enable_log_data:
-                self._check_logging_button()
-                if self._is_logging:
-                    self._log_data()
-            rate.sleep()
-        # if self._is_logging:
-        #     self.data_logger.save()  # Save data when logging stops
+            start_time = time.time()
+            self._check_logging_button()
+            if self._is_logging:
+                self._log_data()
+            elapsed_time = time.time() - start_time
+            if elapsed_time < 1.0 / self.log_freq:
+                time.sleep(1.0 / self.log_freq - elapsed_time)
         print("Data logging thread has stopped.")
 
     def _check_logging_button(self):
@@ -302,101 +309,108 @@ class GalaxeaA1XTeleopController(BaseTeleopController):
         if not self.camera_interface:
             return
 
-        print("Camera streaming started.")
+        print("Camera thread started, waiting for logging to be enabled.")
         window_name = "RealSense Cameras"
-        cv2.namedWindow(window_name, cv2.WINDOW_AUTOSIZE)
+        window_created = False
 
         try:
             while not stop_event.is_set():
                 self.camera_interface.update_frames()
-                frames_dict = self.camera_interface.get_frames()
-                all_camera_rows = []
+                if self._is_logging:
+                    if not window_created:
+                        cv2.namedWindow(window_name, cv2.WINDOW_AUTOSIZE)
+                        window_created = True
 
-                # Use the configured camera dictionary to maintain a consistent order
-                for serial in self.camera_serial_dict.values():
-                    if serial not in frames_dict:
-                        continue
+                    frames_dict = self.camera_interface.get_frames()
+                    all_camera_rows = []
 
-                    frames = frames_dict[serial]
-                    images_in_row = []
+                    # Use the configured camera dictionary to maintain a consistent order
+                    for serial in self.camera_serial_dict.values():
+                        if serial not in frames_dict:
+                            continue
 
-                    color_image = frames.get("color")
-                    if color_image is not None:
-                        # Ensure color image is 3-channel for stacking with colormap
-                        if len(color_image.shape) == 2:
-                            color_image = cv2.cvtColor(color_image, cv2.COLOR_GRAY2BGR)
-                        images_in_row.append(color_image)
+                        frames = frames_dict[serial]
+                        images_in_row = []
 
-                    depth_image = frames.get("depth")
-                    if depth_image is not None:
-                        depth_colormap = cv2.applyColorMap(
-                            cv2.convertScaleAbs(depth_image, alpha=0.03), cv2.COLORMAP_JET
-                        )
-                        images_in_row.append(depth_colormap)
+                        color_image = frames.get("color")
+                        if color_image is not None:
+                            # Ensure color image is 3-channel for stacking with colormap
+                            if len(color_image.shape) == 2:
+                                color_image = cv2.cvtColor(color_image, cv2.COLOR_GRAY2BGR)
+                            images_in_row.append(color_image)
 
-                    if images_in_row:
-                        all_camera_rows.append(np.hstack(images_in_row))
+                        depth_image = frames.get("depth")
+                        if depth_image is not None:
+                            depth_colormap = cv2.applyColorMap(
+                                cv2.convertScaleAbs(depth_image, alpha=0.03), cv2.COLORMAP_JET
+                            )
+                            images_in_row.append(depth_colormap)
 
-                if all_camera_rows:
-                    # Pad rows to the same width for vertical stacking
-                    max_width = max(row.shape[1] for row in all_camera_rows)
-                    padded_rows = []
-                    for row in all_camera_rows:
-                        if row.shape[1] < max_width:
-                            # Assuming 3 channels for color/colormap and consistent height
-                            padding = np.zeros((row.shape[0], max_width - row.shape[1], 3), dtype=np.uint8)
-                            padded_row = np.hstack([row, padding])
-                            padded_rows.append(padded_row)
-                        else:
-                            padded_rows.append(row)
+                        if images_in_row:
+                            all_camera_rows.append(np.hstack(images_in_row))
 
-                    # Vertically stack all camera rows into a single image
-                    combined_image = np.vstack(padded_rows)
-                    cv2.imshow(window_name, cv2.cvtColor(combined_image, cv2.COLOR_RGB2BGR))
+                    if all_camera_rows:
+                        # Pad rows to the same width for vertical stacking
+                        max_width = max(row.shape[1] for row in all_camera_rows)
+                        padded_rows = []
+                        for row in all_camera_rows:
+                            if row.shape[1] < max_width:
+                                # Assuming 3 channels for color/colormap and consistent height
+                                padding = np.zeros((row.shape[0], max_width - row.shape[1], 3), dtype=np.uint8)
+                                padded_row = np.hstack([row, padding])
+                                padded_rows.append(padded_row)
+                            else:
+                                padded_rows.append(row)
 
-                # Process GUI events
-                cv2.waitKey(int(1000.0 / self.camera_interface.fps))
+                        # Vertically stack all camera rows into a single image
+                        combined_image = np.vstack(padded_rows)
+                        cv2.imshow(window_name, cv2.cvtColor(combined_image, cv2.COLOR_RGB2BGR))
+
+                    cv2.waitKey(int(1000.0 / self.camera_interface.fps))
+                else:
+                    if window_created:
+                        cv2.destroyWindow(window_name)
+                        window_created = False
+                    time.sleep(1.0 / self.camera_interface.fps)
+
         finally:
             self.camera_interface.stop()
-            cv2.destroyAllWindows()
+            if window_created:
+                cv2.destroyAllWindows()
             print("Camera thread has stopped.")
 
     def run(self):
-        """
-        Main entry point that starts the multi-threaded IK and control loops.
-        """
-        self._start_time = time.time()  # Record the start time for logging
+        """Main entry point that starts all threads."""
+        self._start_time = time.time()
+        self._stop_event = threading.Event()
+        threads = []
+
+        # Start core threads
         ik_thread = threading.Thread(target=self._ik_thread, args=(self._stop_event,))
         control_thread = threading.Thread(target=self._control_thread, args=(self._stop_event,))
+        threads.extend([ik_thread, control_thread])
 
-        ik_thread.daemon = True
-        control_thread.daemon = True
-
-        ik_thread.start()
-        control_thread.start()
-
+        # Start optional threads
         if self.enable_log_data:
             log_thread = threading.Thread(target=self._data_logging_thread, args=(self._stop_event,))
-            log_thread.daemon = True
-            log_thread.start()
-
+            threads.append(log_thread)
         if self.camera_interface:
             camera_thread = threading.Thread(target=self._camera_thread, args=(self._stop_event,))
-            camera_thread.daemon = True
-            camera_thread.start()
+            threads.append(camera_thread)
+
+        for t in threads:
+            t.daemon = True
+            t.start()
 
         print("Teleoperation running. Press Ctrl+C to exit.")
         try:
-            rospy.spin()
+            while not self._stop_event.is_set() and not rospy.is_shutdown():
+                time.sleep(0.1)
         except KeyboardInterrupt:
             print("\nKeyboard interrupt received.")
         finally:
             print("Shutting down...")
             self._stop_event.set()
-            ik_thread.join(timeout=2.0)
-            control_thread.join(timeout=2.0)
-            if self.enable_log_data:
-                log_thread.join(timeout=2.0)
-            if self.camera_interface:
-                camera_thread.join(timeout=2.0)
+            for t in threads:
+                t.join(timeout=2.0)
             print("All threads have been shut down.")

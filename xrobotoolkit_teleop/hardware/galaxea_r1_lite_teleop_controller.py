@@ -69,7 +69,7 @@ class GalaxeaR1LiteTeleopController(BaseTeleopController):
         scale_factor: float = DEFAULT_SCALE_FACTOR,
         chassis_velocity_scale: list[float] = [0.75, 0.75, 1.0],
         visualize_placo: bool = False,
-        ros_rate_hz: int = 100,
+        control_rate_hz: int = 100,
         enable_log_data: bool = True,
         log_dir: str = "logs/galaxea_r1_lite",
         log_freq: float = 50,
@@ -81,14 +81,15 @@ class GalaxeaR1LiteTeleopController(BaseTeleopController):
             R_headset_world=R_headset_world,
             scale_factor=scale_factor,
             q_init=None,
-            dt=1.0 / ros_rate_hz,
+            dt=1.0 / control_rate_hz,
             enable_log_data=enable_log_data,
             log_dir=log_dir,
             log_freq=log_freq,
         )
 
         self._start_time = 0
-        self.ros_rate_hz = ros_rate_hz
+        self.control_rate_hz = control_rate_hz
+        self.log_freq = log_freq
         self.visualize_placo = visualize_placo
         self.chassis_velocity_scale = chassis_velocity_scale
 
@@ -221,8 +222,8 @@ class GalaxeaR1LiteTeleopController(BaseTeleopController):
 
     def _ik_thread(self, stop_event: threading.Event):
         """Dedicated thread for running the IK solver."""
-        rate = rospy.Rate(1.0 / self.dt)
         while not stop_event.is_set():
+            start_time = time.time()
             self._update_robot_state()
             self._update_gripper_target()
             self._update_joystick_velocity_command()
@@ -230,26 +231,32 @@ class GalaxeaR1LiteTeleopController(BaseTeleopController):
             self._update_ik()
             if self.visualize_placo:
                 self._update_placo_viz()
-            rate.sleep()
+            elapsed_time = time.time() - start_time
+            if elapsed_time < 1.0 / self.control_rate_hz:
+                time.sleep(1.0 / self.control_rate_hz - elapsed_time)
         print("IK loop has stopped.")
 
     def _control_thread(self, stop_event: threading.Event):
         """Dedicated thread for sending commands to hardware."""
-        rate = rospy.Rate(self.ros_rate_hz)
         while not stop_event.is_set():
+            start_time = time.time()
             self._send_command()
-            rate.sleep()
+            elapsed_time = time.time() - start_time
+            if elapsed_time < 1.0 / self.control_rate_hz:
+                time.sleep(1.0 / self.control_rate_hz - elapsed_time)
         self.chassis_controller.stop_chassis()
         print("Control loop has stopped.")
 
     def _data_logging_thread(self, stop_event: threading.Event):
-        rate = rospy.Rate(self.log_freq)
+        """Dedicated thread for data logging."""
         while not stop_event.is_set():
-            if self.enable_log_data:
-                self._check_logging_button()
-                if self._is_logging:
-                    self._log_data()
-            rate.sleep()
+            start_time = time.time()
+            self._check_logging_button()
+            if self._is_logging:
+                self._log_data()
+            elapsed_time = time.time() - start_time
+            if elapsed_time < 1.0 / self.log_freq:
+                time.sleep(1.0 / self.log_freq - elapsed_time)
         print("Data logging thread has stopped.")
 
     def _check_logging_button(self):
@@ -275,34 +282,34 @@ class GalaxeaR1LiteTeleopController(BaseTeleopController):
         self._prev_b_button_state = b_button_state
 
     def run(self):
-        """
-        Main entry point that starts the multi-threaded IK and control loops.
-        """
+        """Main entry point that starts all threads."""
         self._start_time = time.time()
+        self._stop_event = threading.Event()
+        threads = []
+
+        # Start core threads
         ik_thread = threading.Thread(target=self._ik_thread, args=(self._stop_event,))
         control_thread = threading.Thread(target=self._control_thread, args=(self._stop_event,))
+        threads.extend([ik_thread, control_thread])
 
-        ik_thread.daemon = True
-        control_thread.daemon = True
-
-        ik_thread.start()
-        control_thread.start()
-
+        # Start optional threads
         if self.enable_log_data:
             log_thread = threading.Thread(target=self._data_logging_thread, args=(self._stop_event,))
-            log_thread.daemon = True
-            log_thread.start()
+            threads.append(log_thread)
+
+        for t in threads:
+            t.daemon = True
+            t.start()
 
         print("R1 Lite dual-arm teleoperation running. Press Ctrl+C to exit.")
         try:
-            rospy.spin()
+            while not self._stop_event.is_set() and not rospy.is_shutdown():
+                time.sleep(0.1)
         except KeyboardInterrupt:
             print("\nKeyboard interrupt received.")
         finally:
             print("Shutting down...")
             self._stop_event.set()
-            ik_thread.join(timeout=2.0)
-            control_thread.join(timeout=2.0)
-            if self.enable_log_data:
-                log_thread.join(timeout=2.0)
+            for t in threads:
+                t.join(timeout=2.0)
             print("All threads have been shut down.")
