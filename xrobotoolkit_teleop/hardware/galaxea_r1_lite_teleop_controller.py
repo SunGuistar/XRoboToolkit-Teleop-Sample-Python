@@ -67,7 +67,7 @@ class GalaxeaR1LiteTeleopController(BaseTeleopController):
         end_effector_config: dict = DEFAULT_END_EFFECTOR_CONFIG,
         R_headset_world: np.ndarray = R_HEADSET_TO_WORLD,
         scale_factor: float = DEFAULT_SCALE_FACTOR,
-        chassis_velocity_scale: list[float] = [1.0, 1.0, 1.0],
+        chassis_velocity_scale: list[float] = [0.75, 0.75, 1.0],
         visualize_placo: bool = False,
         ros_rate_hz: int = 100,
         enable_log_data: bool = True,

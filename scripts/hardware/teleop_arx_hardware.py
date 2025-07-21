@@ -1,3 +1,4 @@
+import tyro
 from xrobotoolkit_teleop.hardware.arx_r5_teleop_controller import (
     DEFAULT_ARX_R5_END_EFFECTOR_CONFIG,
     DEFAULT_ARX_R5_URDF_PATH,
@@ -5,23 +6,31 @@ from xrobotoolkit_teleop.hardware.arx_r5_teleop_controller import (
 )
 
 
-def main():
+def main(
+    robot_urdf_path: str = DEFAULT_ARX_R5_URDF_PATH,
+    scale_factor: float = 1.5,
+    enable_camera: bool = True,
+    enable_log_data: bool = True,
+    visualize_placo: bool = False,
+    control_rate_hz: int = 50,
+    log_dir: str = "logs/arx_r5",
+):
     """
     Main function to run the ARX R5 teleoperation.
     """
     controller = ARXR5TeleopController(
-        robot_urdf_path=DEFAULT_ARX_R5_URDF_PATH,
+        robot_urdf_path=robot_urdf_path,
         end_effector_config=DEFAULT_ARX_R5_END_EFFECTOR_CONFIG,
-        scale_factor=1.5,
-        enable_camera=True,
-        enable_log_data=True,
+        scale_factor=scale_factor,
+        enable_camera=enable_camera,
+        enable_log_data=enable_log_data,
         can_ports={"right_arm": "can3"},
-        visualize_placo=False,
-        control_rate_hz=50,
-        log_dir="logs/arx_r5",
+        visualize_placo=visualize_placo,
+        control_rate_hz=control_rate_hz,
+        log_dir=log_dir,
     )
     controller.run()
 
 
 if __name__ == "__main__":
-    main()
+    tyro.cli(main)

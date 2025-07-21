@@ -24,6 +24,7 @@ dependencies = [
     "dex_retargeting",
     "pyrealsense2",
     "opencv-python",
+    "tyro",
 ]
 
 [project.optional-dependencies]

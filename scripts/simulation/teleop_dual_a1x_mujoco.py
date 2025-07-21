@@ -1,15 +1,21 @@
 import os
 
+import tyro
 from xrobotoolkit_teleop.simulation.mujoco_teleop_controller import (
     MujocoTeleopController,
 )
 from xrobotoolkit_teleop.utils.path_utils import ASSET_PATH
 
 
-def main():
-    xml_path = os.path.join(ASSET_PATH, "galaxea/A1X/scene.xml")
-    robot_urdf_path = os.path.join(ASSET_PATH, "galaxea/A1X/dual_a1x_fixed_gripper.urdf")
-
+def main(
+    xml_path: str = os.path.join(ASSET_PATH, "galaxea/A1X/scene.xml"),
+    robot_urdf_path: str = os.path.join(ASSET_PATH, "galaxea/A1X/dual_a1x_fixed_gripper.urdf"),
+    scale_factor: float = 1.5,
+    visualize_placo: bool = True,
+):
+    """
+    Main function to run the dual A1X teleoperation in MuJoCo.
+    """
     config = {
         "right_hand": {
             "link_name": "right_arm_link6",
@@ -56,12 +62,12 @@ def main():
         xml_path=xml_path,
         robot_urdf_path=robot_urdf_path,
         end_effector_config=config,
-        scale_factor=1.5,
-        visualize_placo=True,
+        scale_factor=scale_factor,
+        visualize_placo=visualize_placo,
     )
 
     controller.run()
 
 
 if __name__ == "__main__":
-    main()
+    tyro.cli(main)
