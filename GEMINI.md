@@ -63,10 +63,22 @@ Provide the exact shell commands needed to build, test, and run the project.
 ## 4. Coding Style and Conventions
 
 *   **Code Style:** PEP 8
-*   **Formatter:** `black`, `isort`
-*   **Linter:** `flake8`
+*   **Formatter:** `black`
 *   **Naming Conventions:** `snake_case` for variables and functions, `PascalCase` for classes.
 *   **Key Architectural Patterns:** The project uses a controller-based architecture. A `BaseTeleopController` is extended for different simulation (`MujocoTeleopController`, `PlacoTeleopController`) and hardware environments. Hardware interfaces are abstracted in `xrobotoolkit_teleop/hardware/interface/`.
+
+### Code Structure
+
+The project follows a modular structure, with a clear separation of concerns between teleoperation logic, hardware interfaces, and simulation environments.
+
+*   **`scripts/`**: This directory contains high-level scripts for running teleoperation tasks. It is divided into `hardware/` and `simulation/` subdirectories, which contain scripts for controlling physical robots and simulated robots, respectively.
+*   **`xrobotoolkit_teleop/`**: This is the core Python package that contains all the teleoperation logic.
+    *   **`common/`**: This subdirectory contains the base classes and common utilities that are shared across the project.
+        *   `base_teleop_controller.py`: This file defines the abstract base class for all teleoperation controllers. It provides a common interface for controlling robots in both simulation and hardware.
+    *   **`hardware/`**: This subdirectory contains the code for controlling physical robots.
+        *   `interface/`: This subdirectory contains the low-level wrappers for communicating with different hardware components, such as robots, grippers, and cameras.
+    *   **`simulation/`**: This subdirectory contains the code for controlling simulated robots.
+    *   **`utils/`**: This subdirectory contains utility functions that are used throughout the project.
 
 ---
 
@@ -89,7 +101,7 @@ List important files or directories that the agent should be aware of.
 
 ## 6. User Preferences & Notes
 
-*   Use `black`, `isort`, and `flake8` for linting and formatting.
+*   Use `black` for linting and formatting.
 *   Prefer adding new teleoperation scripts in the `scripts/` directory, following the existing hardware/simulation structure.
 *   Always use absolute paths for assets when loading URDFs, leveraging the `path_utils` where appropriate.
 

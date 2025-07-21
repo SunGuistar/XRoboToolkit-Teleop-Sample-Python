@@ -48,13 +48,9 @@ class DynamixelController:
             self.port_handler, motor_id, ADDR_TORQUE_ENABLE, 1
         )
         if dxl_comm_result != COMM_SUCCESS:
-            print(
-                f"Torque enable failed for motor {motor_id}: {self.packet_handler.getTxRxResult(dxl_comm_result)}"
-            )
+            print(f"Torque enable failed for motor {motor_id}: {self.packet_handler.getTxRxResult(dxl_comm_result)}")
         elif dxl_error != 0:
-            print(
-                f"Torque enable error for motor {motor_id}: {self.packet_handler.getRxPacketError(dxl_error)}"
-            )
+            print(f"Torque enable error for motor {motor_id}: {self.packet_handler.getRxPacketError(dxl_error)}")
 
     def disableTorque(self, motor_id: int):
         """Disable torque for a specific motor."""
@@ -62,41 +58,25 @@ class DynamixelController:
             self.port_handler, motor_id, ADDR_TORQUE_ENABLE, 0
         )
         if dxl_comm_result != COMM_SUCCESS:
-            print(
-                f"Torque disable failed for motor {motor_id}: {self.packet_handler.getTxRxResult(dxl_comm_result)}"
-            )
+            print(f"Torque disable failed for motor {motor_id}: {self.packet_handler.getTxRxResult(dxl_comm_result)}")
         elif dxl_error != 0:
-            print(
-                f"Torque disable error for motor {motor_id}: {self.packet_handler.getRxPacketError(dxl_error)}"
-            )
+            print(f"Torque disable error for motor {motor_id}: {self.packet_handler.getRxPacketError(dxl_error)}")
 
     def turnOnLED(self, motor_id: int):
         """Turn on LED for a specific motor."""
-        dxl_comm_result, dxl_error = self.packet_handler.write1ByteTxRx(
-            self.port_handler, motor_id, ADDR_LED_RED, 1
-        )
+        dxl_comm_result, dxl_error = self.packet_handler.write1ByteTxRx(self.port_handler, motor_id, ADDR_LED_RED, 1)
         if dxl_comm_result != COMM_SUCCESS:
-            print(
-                f"LED turn on failed for motor {motor_id}: {self.packet_handler.getTxRxResult(dxl_comm_result)}"
-            )
+            print(f"LED turn on failed for motor {motor_id}: {self.packet_handler.getTxRxResult(dxl_comm_result)}")
         elif dxl_error != 0:
-            print(
-                f"LED turn on error for motor {motor_id}: {self.packet_handler.getRxPacketError(dxl_error)}"
-            )
+            print(f"LED turn on error for motor {motor_id}: {self.packet_handler.getRxPacketError(dxl_error)}")
 
     def turnOffLED(self, motor_id: int):
         """Turn off LED for a specific motor."""
-        dxl_comm_result, dxl_error = self.packet_handler.write1ByteTxRx(
-            self.port_handler, motor_id, ADDR_LED_RED, 0
-        )
+        dxl_comm_result, dxl_error = self.packet_handler.write1ByteTxRx(self.port_handler, motor_id, ADDR_LED_RED, 0)
         if dxl_comm_result != COMM_SUCCESS:
-            print(
-                f"LED turn off failed for motor {motor_id}: {self.packet_handler.getTxRxResult(dxl_comm_result)}"
-            )
+            print(f"LED turn off failed for motor {motor_id}: {self.packet_handler.getTxRxResult(dxl_comm_result)}")
         elif dxl_error != 0:
-            print(
-                f"LED turn off error for motor {motor_id}: {self.packet_handler.getRxPacketError(dxl_error)}"
-            )
+            print(f"LED turn off error for motor {motor_id}: {self.packet_handler.getRxPacketError(dxl_error)}")
 
     def setGoalPosition(self, motor_id: int, position: int):
         """Set goal position for a specific motor."""
@@ -109,9 +89,7 @@ class DynamixelController:
             )
             return False
         elif dxl_error != 0:
-            print(
-                f"Error in writing position for motor {motor_id}: {self.packet_handler.getRxPacketError(dxl_error)}"
-            )
+            print(f"Error in writing position for motor {motor_id}: {self.packet_handler.getRxPacketError(dxl_error)}")
             return False
         return True
 
@@ -121,14 +99,10 @@ class DynamixelController:
             self.port_handler, motor_id, ADDR_PRESENT_POSITION
         )
         if dxl_comm_result != COMM_SUCCESS:
-            print(
-                f"Failed to read position for motor {motor_id}: {self.packet_handler.getTxRxResult(dxl_comm_result)}"
-            )
+            print(f"Failed to read position for motor {motor_id}: {self.packet_handler.getTxRxResult(dxl_comm_result)}")
             return None
         elif dxl_error != 0:
-            print(
-                f"Error in reading position for motor {motor_id}: {self.packet_handler.getRxPacketError(dxl_error)}"
-            )
+            print(f"Error in reading position for motor {motor_id}: {self.packet_handler.getRxPacketError(dxl_error)}")
             return None
         return dxl_present_position
 

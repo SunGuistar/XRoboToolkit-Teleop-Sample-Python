@@ -33,7 +33,9 @@ from xrobotoolkit_teleop.utils.geometry import (
     apply_delta_pose,
     quat_diff_as_angle_axis,
 )
-from xrobotoolkit_teleop.utils.parallel_gripper_utils import calc_parallel_gripper_position
+from xrobotoolkit_teleop.utils.parallel_gripper_utils import (
+    calc_parallel_gripper_position,
+)
 from xrobotoolkit_teleop.utils.path_utils import ASSET_PATH
 
 DEFAULT_DUAL_ARM_URDF_PATH = os.path.join(ASSET_PATH, "universal_robots_ur5e/dual_ur5e.urdf")

@@ -190,7 +190,9 @@ class ARXR5TeleopController(HardwareTeleopController):
                 arm: self.placo_robot.state.q[self.placo_arm_joint_slice[arm]].copy() for arm in self.arm_controllers
             },
             "gripper_target": {
-                arm: self.gripper_pos_target[arm].copy() if "gripper_config" in self.end_effector_config[arm] else None
+                arm: (
+                    self.gripper_pos_target[arm].copy() if "gripper_config" in self.end_effector_config[arm] else None
+                )
                 for arm in self.arm_controllers
             },
         }

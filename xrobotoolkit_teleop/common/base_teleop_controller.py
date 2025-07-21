@@ -163,7 +163,10 @@ class BaseTeleopController(abc.ABC):
                 xr_pose = self.xr_client.get_pose_by_name(config["pose_source"])
                 delta_xyz, delta_rot = self._process_xr_pose(xr_pose, src_name)
                 target_xyz, target_quat = apply_delta_pose(
-                    self.ref_ee_xyz[src_name], self.ref_ee_quat[src_name], delta_xyz, delta_rot
+                    self.ref_ee_xyz[src_name],
+                    self.ref_ee_quat[src_name],
+                    delta_xyz,
+                    delta_rot,
                 )
                 target_pose = tf.quaternion_matrix(target_quat)
                 target_pose[:3, 3] = target_xyz

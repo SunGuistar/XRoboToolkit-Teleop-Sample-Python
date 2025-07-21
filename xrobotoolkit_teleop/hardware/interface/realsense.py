@@ -121,7 +121,7 @@ class RealSenseCameraInterface(BaseCameraInterface):
                     "depth": depth_image,
                     "timestamp_us": color_frame.get_timestamp(),  # microseconds
                     "color_format": color_frame.get_profile().format(),
-                    "depth_format": depth_frame.get_profile().format() if depth_frame else None,
+                    "depth_format": (depth_frame.get_profile().format() if depth_frame else None),
                 }
 
                 self.last_update_time[serial] = current_time

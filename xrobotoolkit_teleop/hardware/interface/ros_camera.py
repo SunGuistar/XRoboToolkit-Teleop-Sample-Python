@@ -50,11 +50,7 @@ class RosCameraInterface(BaseCameraInterface):
 
             if self.enable_depth and "depth" in topics:
                 depth_topic = topics["depth"]
-                self.subscribers.append(
-                    rospy.Subscriber(
-                        depth_topic, Image, self._depth_callback, callback_args=name
-                    )
-                )
+                self.subscribers.append(rospy.Subscriber(depth_topic, Image, self._depth_callback, callback_args=name))
             print(f"Subscribed to topics for camera: {name}")
 
     def _color_callback(self, msg, camera_name):

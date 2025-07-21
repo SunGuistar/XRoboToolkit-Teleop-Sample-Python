@@ -50,9 +50,7 @@ def quaternion_to_angle_axis(quat: np.ndarray, eps: float = 1e-6) -> np.ndarray:
     return axis * angle
 
 
-def quat_diff_as_angle_axis(
-    q1: np.ndarray, q2: np.ndarray, eps: float = 1e-6
-) -> np.ndarray:
+def quat_diff_as_angle_axis(q1: np.ndarray, q2: np.ndarray, eps: float = 1e-6) -> np.ndarray:
     """Calculates the rotation from q1 to q2 as an angle-axis vector.
 
     This computes DeltaQ such that q2 = DeltaQ * q1.
@@ -66,12 +64,8 @@ def quat_diff_as_angle_axis(
     Returns:
         Angle-axis vector [ax*angle, ay*angle, az*angle] representing DeltaQ.
     """
-    if not (
-        is_valid_quaternion(q1, tol=eps) and is_valid_quaternion(q2, tol=eps)
-    ):
-        print(
-            "Warning: Invalid quaternion input to calculate_rotation_error_as_angle_axis."
-        )
+    if not (is_valid_quaternion(q1, tol=eps) and is_valid_quaternion(q2, tol=eps)):
+        print("Warning: Invalid quaternion input to calculate_rotation_error_as_angle_axis.")
 
     q1_inv = tf.quaternion_inverse(q1)
     delta_q = tf.quaternion_multiply(q2, q1_inv)

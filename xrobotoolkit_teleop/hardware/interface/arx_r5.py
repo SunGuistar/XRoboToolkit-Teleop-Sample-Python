@@ -59,7 +59,9 @@ class ARXR5Interface:
         return True
 
     def set_joint_positions(
-        self, positions: Union[float, List[float], np.ndarray], **kwargs  # Shape: (num_joints,)
+        self,
+        positions: Union[float, List[float], np.ndarray],
+        **kwargs,  # Shape: (num_joints,)
     ) -> bool:
         """
         Move the arm to the given joint position(s).
@@ -93,7 +95,9 @@ class ARXR5Interface:
         self.arm.set_arm_status(4)
 
     def set_ee_pose_xyzrpy(
-        self, xyzrpy: Optional[Union[List[float], np.ndarray]] = None, **kwargs  # Shape: (6,)
+        self,
+        xyzrpy: Optional[Union[List[float], np.ndarray]] = None,
+        **kwargs,  # Shape: (6,)
     ) -> bool:
         """
         Move the end effector to the given pose.

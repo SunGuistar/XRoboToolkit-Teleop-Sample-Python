@@ -217,7 +217,8 @@ class HardwareTeleopController(BaseTeleopController, ABC):
                         depth_image = frames.get("depth")
                         if depth_image is not None:
                             depth_colormap = cv2.applyColorMap(
-                                cv2.convertScaleAbs(depth_image, alpha=0.03), cv2.COLORMAP_JET
+                                cv2.convertScaleAbs(depth_image, alpha=0.03),
+                                cv2.COLORMAP_JET,
                             )
                             images_in_row.append(depth_colormap)
 
@@ -228,7 +229,15 @@ class HardwareTeleopController(BaseTeleopController, ABC):
                         max_width = max(row.shape[1] for row in all_camera_rows)
                         padded_rows = [
                             (
-                                np.hstack([row, np.zeros((row.shape[0], max_width - row.shape[1], 3), dtype=np.uint8)])
+                                np.hstack(
+                                    [
+                                        row,
+                                        np.zeros(
+                                            (row.shape[0], max_width - row.shape[1], 3),
+                                            dtype=np.uint8,
+                                        ),
+                                    ]
+                                )
                                 if row.shape[1] < max_width
                                 else row
                             )
@@ -236,7 +245,10 @@ class HardwareTeleopController(BaseTeleopController, ABC):
                         ]
                         if padded_rows:
                             combined_image = np.vstack(padded_rows)
-                            cv2.imshow(window_name, cv2.cvtColor(combined_image, cv2.COLOR_RGB2BGR))
+                            cv2.imshow(
+                                window_name,
+                                cv2.cvtColor(combined_image, cv2.COLOR_RGB2BGR),
+                            )
 
                     if cv2.waitKey(1) & 0xFF == ord("q"):
                         break
@@ -275,12 +287,16 @@ class HardwareTeleopController(BaseTeleopController, ABC):
 
         if self.enable_log_data:
             log_thread = threading.Thread(
-                name="_data_logging_thread", target=self._data_logging_thread, args=(self._stop_event,)
+                name="_data_logging_thread",
+                target=self._data_logging_thread,
+                args=(self._stop_event,),
             )
             threads.append(log_thread)
         if self.enable_camera and self.camera_interface:
             camera_thread = threading.Thread(
-                name="_camera_thread", target=self._camera_thread, args=(self._stop_event,)
+                name="_camera_thread",
+                target=self._camera_thread,
+                args=(self._stop_event,),
             )
             threads.append(camera_thread)
 

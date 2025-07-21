@@ -324,7 +324,13 @@ def estimate_frame_from_hand_points(keypoint_3d_array: np.ndarray) -> np.ndarray
 
 
 class DexHandTracker:
-    def __init__(self, robot_name: RobotName, urdf_path: str, retargeting_type: RetargetingType, hand_type: HandType):
+    def __init__(
+        self,
+        robot_name: RobotName,
+        urdf_path: str,
+        retargeting_type: RetargetingType,
+        hand_type: HandType,
+    ):
         self.robot_name = robot_name
         self.retargeting_type = retargeting_type
         self.hand_type = hand_type

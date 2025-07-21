@@ -114,9 +114,7 @@ class RobotiqGripper:
         # note some special variables (like FLT) may send 2 bytes, instead of an integer. We assume integer here
         var_name, value_str = data.decode(self.ENCODING).split()
         if var_name != variable:
-            raise ValueError(
-                f"Unexpected response {data} ({data.decode(self.ENCODING)}): does not match '{variable}'"
-            )
+            raise ValueError(f"Unexpected response {data} ({data.decode(self.ENCODING)}): does not match '{variable}'")
         value = int(value_str)
         return value
 
@@ -248,9 +246,7 @@ class RobotiqGripper:
         self._min_position = position
 
         if log:
-            print(
-                f"Gripper auto-calibrated to [{self.get_min_position()}, {self.get_max_position()}]"
-            )
+            print(f"Gripper auto-calibrated to [{self.get_min_position()}, {self.get_max_position()}]")
 
     def move(self, position: int, speed: int, force: int) -> Tuple[bool, int]:
         """Sends commands to start moving towards the given position, with the specified speed and force.
@@ -279,9 +275,7 @@ class RobotiqGripper:
         )
         return self._set_vars(var_dict), clip_pos
 
-    def move_and_wait_for_pos(
-        self, position: int, speed: int, force: int
-    ) -> Tuple[int, ObjectStatus]:  # noqa
+    def move_and_wait_for_pos(self, position: int, speed: int, force: int) -> Tuple[int, ObjectStatus]:  # noqa
         """Sends commands to start moving towards the given position, with the specified speed and force, and
         then waits for the move to complete.
         :param position: Position to move to [min_position, max_position]
