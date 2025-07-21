@@ -3,12 +3,18 @@ import threading
 import time
 from typing import Dict
 
+import cv2
 import meshcat.transformations as tf
 import numpy as np
 import rospy
 
 from xrobotoolkit_teleop.common.base_teleop_controller import BaseTeleopController
-from xrobotoolkit_teleop.hardware.interface.galaxea import A1XController, R1LiteChassisController, R1LiteTorsoController
+from xrobotoolkit_teleop.hardware.interface.galaxea import (
+    A1XController,
+    R1LiteChassisController,
+    R1LiteTorsoController,
+)
+from xrobotoolkit_teleop.hardware.interface.ros_camera import RosCameraInterface
 from xrobotoolkit_teleop.utils.geometry import (
     R_HEADSET_TO_WORLD,
 )
@@ -73,6 +79,8 @@ class GalaxeaR1LiteTeleopController(BaseTeleopController):
         enable_log_data: bool = True,
         log_dir: str = "logs/galaxea_r1_lite",
         log_freq: float = 50,
+        enable_camera: bool = True,
+        camera_fps: int = 30,
     ):
         super().__init__(
             robot_urdf_path=robot_urdf_path,
@@ -92,6 +100,33 @@ class GalaxeaR1LiteTeleopController(BaseTeleopController):
         self.log_freq = log_freq
         self.visualize_placo = visualize_placo
         self.chassis_velocity_scale = chassis_velocity_scale
+        self.enable_camera = enable_camera
+        self.camera_interface = None
+        self.camera_fps = camera_fps
+
+        if self.enable_camera:
+            print("Initializing camera...")
+            try:
+                camera_topics = {
+                    # "left": {
+                    #     "color": "/hdas/camera_wrist_left/color/image_raw/compressed",
+                    # },
+                    # "right": {
+                    #     "color": "/hdas/camera_wrist_right/color/image_raw/compressed",
+                    # },
+                    "head_left": {
+                        "color": "/hdas/camera_head/left_raw/image_raw_color/compressed",
+                    },
+                    "head_right": {
+                        "color": "/hdas/camera_head/right_raw/image_raw_color/compressed",
+                    },
+                }
+                self.camera_interface = RosCameraInterface(camera_topics=camera_topics)
+                self.camera_interface.start()
+                print("Camera initialized successfully.")
+            except Exception as e:
+                print(f"Error initializing camera: {e}")
+                self.enable_camera = False
 
         if self.visualize_placo:
             self._init_placo_viz()
@@ -218,6 +253,8 @@ class GalaxeaR1LiteTeleopController(BaseTeleopController):
                 "gripper_qpos": {arm: controller.qpos_gripper for arm, controller in self.arm_controllers.items()},
                 "gripper_qpos_des": {arm: controller.q_des_gripper for arm, controller in self.arm_controllers.items()},
             }
+            if self.enable_camera and self.camera_interface:
+                data_entry["image"] = self.camera_interface.get_frames()
             self.data_logger.add_entry(data_entry)
 
     def _ik_thread(self, stop_event: threading.Event):
@@ -281,6 +318,83 @@ class GalaxeaR1LiteTeleopController(BaseTeleopController):
 
         self._prev_b_button_state = b_button_state
 
+    def _camera_thread(self, stop_event: threading.Event):
+        """Dedicated thread for managing the camera lifecycle and streaming."""
+        if not self.camera_interface:
+            return
+
+        print("Camera thread started, waiting for logging to be enabled.")
+        window_name = "ROS Cameras"
+        window_created = False
+
+        try:
+            while not stop_event.is_set():
+                self.camera_interface.update_frames()  # This is a no-op for ROS, but good for consistency
+                if self._is_logging:
+                    if not window_created:
+                        cv2.namedWindow(window_name, cv2.WINDOW_AUTOSIZE)
+                        window_created = True
+
+                    frames_dict = self.camera_interface.get_frames()
+                    all_camera_rows = []
+
+                    # Use the configured camera dictionary to maintain a consistent order
+                    for name in self.camera_interface.camera_topics.keys():
+                        if name not in frames_dict:
+                            continue
+
+                        frames = frames_dict[name]
+                        images_in_row = []
+
+                        color_image = frames.get("color")
+                        if color_image is not None:
+                            # Ensure color image is 3-channel for stacking with colormap
+                            if len(color_image.shape) == 2:
+                                color_image = cv2.cvtColor(color_image, cv2.COLOR_GRAY2BGR)
+                            images_in_row.append(color_image)
+
+                        depth_image = frames.get("depth")
+                        if depth_image is not None:
+                            depth_colormap = cv2.applyColorMap(
+                                cv2.convertScaleAbs(depth_image, alpha=0.03), cv2.COLORMAP_JET
+                            )
+                            images_in_row.append(depth_colormap)
+
+                        if images_in_row:
+                            all_camera_rows.append(np.hstack(images_in_row))
+
+                    if all_camera_rows:
+                        # Pad rows to the same width for vertical stacking
+                        max_width = max(row.shape[1] for row in all_camera_rows)
+                        padded_rows = []
+                        for row in all_camera_rows:
+                            if row.shape[1] < max_width:
+                                # Assuming 3 channels for color/colormap and consistent height
+                                padding = np.zeros((row.shape[0], max_width - row.shape[1], 3), dtype=np.uint8)
+                                padded_row = np.hstack([row, padding])
+                                padded_rows.append(padded_row)
+                            else:
+                                padded_rows.append(row)
+
+                        # Vertically stack all camera rows into a single image
+                        if padded_rows:
+                            combined_image = np.vstack(padded_rows)
+                            cv2.imshow(window_name, combined_image)
+
+                    if cv2.waitKey(1) & 0xFF == ord("q"):
+                        break
+                else:
+                    if window_created:
+                        cv2.destroyWindow(window_name)
+                        window_created = False
+                    time.sleep(1.0 / self.camera_fps)
+
+        finally:
+            self.camera_interface.stop()
+            if window_created:
+                cv2.destroyAllWindows()
+            print("Camera thread has stopped.")
+
     def run(self):
         """Main entry point that starts all threads."""
         self._start_time = time.time()
@@ -296,6 +410,9 @@ class GalaxeaR1LiteTeleopController(BaseTeleopController):
         if self.enable_log_data:
             log_thread = threading.Thread(target=self._data_logging_thread, args=(self._stop_event,))
             threads.append(log_thread)
+        if self.camera_interface:
+            camera_thread = threading.Thread(target=self._camera_thread, args=(self._stop_event,))
+            threads.append(camera_thread)
 
         for t in threads:
             t.daemon = True

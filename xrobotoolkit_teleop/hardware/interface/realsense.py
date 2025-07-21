@@ -2,10 +2,11 @@ import threading
 import time
 
 import numpy as np
+from .base_camera import BaseCameraInterface
 import pyrealsense2 as rs
 
 
-class RealSenseCameraInterface:
+class RealSenseCameraInterface(BaseCameraInterface):
     """
     An interface to handle one or more Intel RealSense cameras.
     """
