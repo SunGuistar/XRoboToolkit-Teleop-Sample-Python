@@ -27,7 +27,7 @@ class BaseTeleopController(abc.ABC):
     def __init__(
         self,
         robot_urdf_path: str,
-        end_effector_config: Dict[str, Dict[str, Any]],
+        manipulator_config: Dict[str, Dict[str, Any]],
         floating_base: bool,
         R_headset_world: np.ndarray,
         scale_factor: float,
@@ -38,7 +38,7 @@ class BaseTeleopController(abc.ABC):
         log_freq: float = 50,
     ):
         self.robot_urdf_path = robot_urdf_path
-        self.end_effector_config = end_effector_config
+        self.manipulator_config = manipulator_config
         self.floating_base = floating_base
         self.R_headset_world = R_headset_world
         self.scale_factor = scale_factor
@@ -53,14 +53,20 @@ class BaseTeleopController(abc.ABC):
             self.data_logger = DataLogger(log_dir=log_dir)
 
         # Initial poses
-        self.ref_ee_xyz = {name: None for name in end_effector_config.keys()}
-        self.ref_ee_quat = {name: None for name in end_effector_config.keys()}
-        self.ref_controller_xyz = {name: None for name in end_effector_config.keys()}
-        self.ref_controller_quat = {name: None for name in end_effector_config.keys()}
+        self.ref_ee_xyz = {name: None for name in manipulator_config.keys()}
+        self.ref_ee_quat = {name: None for name in manipulator_config.keys()}
+        self.ref_controller_xyz = {name: None for name in manipulator_config.keys()}
+        self.ref_controller_quat = {name: None for name in manipulator_config.keys()}
         self.effector_task = {}
+        self.effector_control_mode = {}  # Store control mode for each end effector
         self.active = {}
         self.gripper_pos_target = {}
-        for name, config in end_effector_config.items():
+
+        # Motion tracker support
+        self.motion_tracker_task = {}
+        self.ref_tracker_xyz = {}  # Store initial tracker positions
+        self.ref_robot_xyz = {}  # Store initial robot end-effector positions
+        for name, config in self.manipulator_config.items():
             if "gripper_config" in config:
                 gripper_config = config["gripper_config"]
                 self.gripper_pos_target[name] = {
@@ -132,14 +138,42 @@ class BaseTeleopController(abc.ABC):
         self.placo_robot.update_kinematics()
 
         # Set up end effector tasks
-        for name, config in self.end_effector_config.items():
+        for name, config in self.manipulator_config.items():
+            # Get control mode (default to "pose" for backward compatibility)
+            control_mode = config.get("control_mode", "pose")
+            self.effector_control_mode[name] = control_mode
+            
             ee_xyz, ee_quat = self._get_link_pose(config["link_name"])
-            ee_target = tf.quaternion_matrix(ee_quat)
-            ee_target[:3, 3] = ee_xyz
-            self.effector_task[name] = self.solver.add_frame_task(config["link_name"], ee_target)
+            
+            if control_mode == "position":
+                # Position-only control
+                self.effector_task[name] = self.solver.add_position_task(config["link_name"], ee_xyz)
+                print(f"Created position task for {name} -> {config['link_name']}")
+            else:
+                # Full pose control (default)
+                ee_target = tf.quaternion_matrix(ee_quat)
+                ee_target[:3, 3] = ee_xyz
+                self.effector_task[name] = self.solver.add_frame_task(config["link_name"], ee_target)
+                print(f"Created pose task for {name} -> {config['link_name']}")
+            
             self.effector_task[name].configure(name, "soft", 1.0)
             manipulability = self.solver.add_manipulability_task(config["link_name"], "both", 1.0)
             manipulability.configure("manipulability", "soft", 1e-2)
+
+            # Set up motion tracker tasks if configured (position only)
+            if "motion_tracker" in config:
+                tracker_config = config["motion_tracker"]
+                link_target = tracker_config["link_target"]
+
+                # Get current position of the target link
+                target_xyz, _ = self._get_link_pose(link_target)
+
+                # Create position task for motion tracker target (xyz only)
+                tracker_task_name = f"{name}_tracker"
+                self.motion_tracker_task[name] = self.solver.add_position_task(link_target, target_xyz)
+                self.motion_tracker_task[name].configure(tracker_task_name, "soft", 1.0)
+
+                print(f"Motion tracker position task created for {name} -> {link_target}")
 
         self.placo_robot.update_kinematics()
 
@@ -151,7 +185,7 @@ class BaseTeleopController(abc.ABC):
         self._update_robot_state()
         self.placo_robot.update_kinematics()
 
-        for src_name, config in self.end_effector_config.items():
+        for src_name, config in self.manipulator_config.items():
             xr_grip_val = self.xr_client.get_key_value_by_name(config["control_trigger"])
             self.active[src_name] = xr_grip_val > 0.9
 
@@ -162,47 +196,139 @@ class BaseTeleopController(abc.ABC):
 
                 xr_pose = self.xr_client.get_pose_by_name(config["pose_source"])
                 delta_xyz, delta_rot = self._process_xr_pose(xr_pose, src_name)
-                target_xyz, target_quat = apply_delta_pose(
-                    self.ref_ee_xyz[src_name],
-                    self.ref_ee_quat[src_name],
-                    delta_xyz,
-                    delta_rot,
-                )
-                target_pose = tf.quaternion_matrix(target_quat)
-                target_pose[:3, 3] = target_xyz
-                self.effector_task[src_name].T_world_frame = target_pose
+                
+                if self.effector_control_mode[src_name] == "position":
+                    # Position-only control: only apply position delta
+                    target_xyz = self.ref_ee_xyz[src_name] + delta_xyz
+                    self.effector_task[src_name].target_world = target_xyz
+                else:
+                    # Full pose control: apply both position and orientation deltas
+                    target_xyz, target_quat = apply_delta_pose(
+                        self.ref_ee_xyz[src_name],
+                        self.ref_ee_quat[src_name],
+                        delta_xyz,
+                        delta_rot,
+                    )
+                    target_pose = tf.quaternion_matrix(target_quat)
+                    target_pose[:3, 3] = target_xyz
+                    self.effector_task[src_name].T_world_frame = target_pose
             else:
                 if self.ref_ee_xyz[src_name] is not None:
                     print(f"{src_name} is deactivated.")
                     self.ref_ee_xyz[src_name] = None
                     self.ref_controller_xyz[src_name] = None
 
+        # Process motion tracker data
+        self._update_motion_tracker_tasks()
+
         try:
             self.solver.solve(True)
         except RuntimeError as e:
             print(f"IK solver failed: {e}")
 
+    def _update_motion_tracker_tasks(self):
+        """Process motion tracker data and update corresponding Placo tasks."""
+        motion_tracker_data = self.xr_client.get_motion_tracker_data()
+
+        for src_name, config in self.manipulator_config.items():
+            # Skip if no motion tracker configured for this end effector
+            if "motion_tracker" not in config:
+                continue
+
+            # Skip if main controller is not active
+            if not self.active.get(src_name, False):
+                # Reset motion tracker references when controller is inactive
+                if src_name in self.ref_tracker_xyz:
+                    del self.ref_tracker_xyz[src_name]
+                    del self.ref_robot_xyz[src_name]
+                continue
+
+            tracker_config = config["motion_tracker"]
+            serial = tracker_config["serial"]
+
+            # Skip if this tracker is not available
+            if serial not in motion_tracker_data:
+                continue
+
+            # Get motion tracker pose
+            tracker_pose = motion_tracker_data[serial]["pose"]
+            tracker_xyz = self.R_headset_world @ np.array(tracker_pose[:3])
+
+            # Initialize reference positions on first detection
+            if src_name not in self.ref_tracker_xyz:
+                self.ref_tracker_xyz[src_name] = tracker_xyz.copy()
+                # Get current robot end-effector position as baseline
+                robot_xyz, _ = self._get_link_pose(config["motion_tracker"]["link_target"])
+                self.ref_robot_xyz[src_name] = robot_xyz.copy()
+                continue
+
+            # Calculate movement delta from tracker's initial position
+            tracker_delta = tracker_xyz - self.ref_tracker_xyz[src_name]
+
+            # Apply scaled tracker movement to robot's initial position
+            final_target_xyz = self.ref_robot_xyz[src_name] + tracker_delta * self.scale_factor
+
+            # Update motion tracker task target position
+            if src_name in self.motion_tracker_task:
+                self.motion_tracker_task[src_name].target_world = final_target_xyz
+
     def _init_placo_viz(self):
         self.placo_vis = robot_viz(self.placo_robot)
         webbrowser.open(self.placo_vis.viewer.url())
         self.placo_vis.display(self.placo_robot.state.q)
-        for name, config in self.end_effector_config.items():
+        for name, config in self.manipulator_config.items():
             robot_frame_viz(self.placo_robot, config["link_name"])
-            frame_viz(f"vis_target_{name}", self.effector_task[name].T_world_frame)
+            
+            # Show appropriate visualization based on control mode
+            if self.effector_control_mode[name] == "position":
+                # Create a frame matrix for position-only visualization
+                target_frame = np.eye(4)
+                target_frame[:3, 3] = self.effector_task[name].target_world
+                frame_viz(f"vis_target_{name}", target_frame)
+            else:
+                # Full pose visualization
+                frame_viz(f"vis_target_{name}", self.effector_task[name].T_world_frame)
+
+            # Visualize motion tracker target if configured
+            if "motion_tracker" in config and name in self.motion_tracker_task:
+                link_target = config["motion_tracker"]["link_target"]
+                robot_frame_viz(self.placo_robot, link_target)
+                # Create a frame matrix for visualization
+                tracker_frame = np.eye(4)
+                tracker_frame[:3, 3] = self.motion_tracker_task[name].target_world
+                frame_viz(f"vis_tracker_{name}", tracker_frame)
 
     def _update_placo_viz(self):
         self.placo_vis.display(self.placo_robot.state.q)
-        for name, config in self.end_effector_config.items():
+        for name, config in self.manipulator_config.items():
             robot_frame_viz(self.placo_robot, config["link_name"])
-            frame_viz(f"vis_target_{name}", self.effector_task[name].T_world_frame)
+            
+            # Show appropriate visualization based on control mode
+            if self.effector_control_mode[name] == "position":
+                # Create a frame matrix for position-only visualization
+                target_frame = np.eye(4)
+                target_frame[:3, 3] = self.effector_task[name].target_world
+                frame_viz(f"vis_target_{name}", target_frame)
+            else:
+                # Full pose visualization
+                frame_viz(f"vis_target_{name}", self.effector_task[name].T_world_frame)
+
+            # Update motion tracker target visualization if configured
+            if "motion_tracker" in config and name in self.motion_tracker_task:
+                link_target = config["motion_tracker"]["link_target"]
+                robot_frame_viz(self.placo_robot, link_target)
+                # Create a frame matrix for visualization
+                tracker_frame = np.eye(4)
+                tracker_frame[:3, 3] = self.motion_tracker_task[name].target_world
+                frame_viz(f"vis_tracker_{name}", tracker_frame)
 
     def _update_gripper_target(self):
-        for gripper_name in self.end_effector_config.keys():
-            if "gripper_config" not in self.end_effector_config[gripper_name]:
+        for gripper_name in self.manipulator_config.keys():
+            if "gripper_config" not in self.manipulator_config[gripper_name]:
                 continue
 
-            gripper_config = self.end_effector_config[gripper_name]["gripper_config"]
-            gripper_config = self.end_effector_config[gripper_name]["gripper_config"]
+            gripper_config = self.manipulator_config[gripper_name]["gripper_config"]
+            gripper_config = self.manipulator_config[gripper_name]["gripper_config"]
             gripper_type = gripper_config["type"]
             if gripper_type == "parallel":
                 trigger_value = self.xr_client.get_key_value_by_name(gripper_config["gripper_trigger"])

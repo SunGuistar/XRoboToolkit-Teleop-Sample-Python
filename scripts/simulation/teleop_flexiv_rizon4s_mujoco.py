@@ -22,7 +22,12 @@ def main(
             "link_name": "flange",
             "pose_source": "right_controller",
             "control_trigger": "right_grip",
-            "vis_target": "target",  # You might need to add a site named 'right_target' in your XML for visualization
+            "vis_target": "target",
+            "control_mode": "position",  # Try "pose" for full pose control
+            "motion_tracker": {
+                "serial": "PC2310BLH9020740B",
+                "link_target": "link4",
+            },
         },
     }
 
@@ -30,7 +35,7 @@ def main(
     controller = MujocoTeleopController(
         xml_path=xml_path,
         robot_urdf_path=robot_urdf_path,
-        end_effector_config=config,
+        manipulator_config=config,
         scale_factor=scale_factor,
         visualize_placo=visualize_placo,
     )

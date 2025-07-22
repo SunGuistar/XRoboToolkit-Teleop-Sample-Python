@@ -20,7 +20,7 @@ class PlacoTeleopController(BaseTeleopController):
     def __init__(
         self,
         robot_urdf_path: str,
-        end_effector_config: Dict[str, Dict[str, Any]],
+        manipulator_config: Dict[str, Dict[str, Any]],
         floating_base=False,
         R_headset_world=R_HEADSET_TO_WORLD,
         scale_factor=1.0,
@@ -29,7 +29,7 @@ class PlacoTeleopController(BaseTeleopController):
     ):
         super().__init__(
             robot_urdf_path,
-            end_effector_config,
+            manipulator_config,
             floating_base,
             R_headset_world,
             scale_factor,

@@ -21,7 +21,7 @@ class MujocoTeleopController(BaseTeleopController):
         self,
         xml_path: str,
         robot_urdf_path: str,
-        end_effector_config: Dict[str, Dict[str, Any]],
+        manipulator_config: Dict[str, Dict[str, Any]],
         floating_base=False,
         R_headset_world=R_HEADSET_TO_WORLD,
         visualize_placo=False,
@@ -36,11 +36,11 @@ class MujocoTeleopController(BaseTeleopController):
         # To be initialized later
         self.mj_model = None
         self.mj_data = None
-        self.target_mocap_idx = {name: -1 for name in end_effector_config.keys()}
+        self.target_mocap_idx = {name: -1 for name in manipulator_config.keys()}
 
         super().__init__(
             robot_urdf_path,
-            end_effector_config,
+            manipulator_config,
             floating_base,
             R_headset_world,
             scale_factor,
@@ -74,7 +74,7 @@ class MujocoTeleopController(BaseTeleopController):
         mujoco.mj_forward(self.mj_model, self.mj_data)
 
         # setup mocap target
-        for name, config in self.end_effector_config.items():
+        for name, config in self.manipulator_config.items():
             if "vis_target" not in config:
                 print(f"Warning: 'vis_target' not found in config for {name}. Skipping mocap setup.")
                 continue
