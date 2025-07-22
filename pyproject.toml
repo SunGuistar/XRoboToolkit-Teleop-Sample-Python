@@ -37,3 +37,6 @@ packages = ["xrobotoolkit_teleop"]
 
 [tool.setuptools.package-data]
 xrobotoolkit_teleop = ["../assets/**/*"]
+
+[tool.black]
+line-length = 120

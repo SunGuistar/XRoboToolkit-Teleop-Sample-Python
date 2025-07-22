@@ -1,6 +1,7 @@
 from typing import Any, Dict
 
 import mujoco
+from meshcat import transformations as tf
 from mujoco import viewer as mj_viewer
 
 from xrobotoolkit_teleop.common.base_teleop_controller import BaseTeleopController
@@ -123,6 +124,14 @@ class MujocoTeleopController(BaseTeleopController):
         )
         self.placo_robot.update_kinematics()
 
+    def _update_mocap_target(self):
+        for name, task in self.effector_task.items():
+            T_world_target = task.T_world_frame
+            mocap_idx = self.target_mocap_idx.get(name)
+            if mocap_idx is not None and mocap_idx != -1:
+                self.mj_data.mocap_pos[mocap_idx] = T_world_target[:3, 3]
+                self.mj_data.mocap_quat[mocap_idx] = tf.quaternion_from_matrix(T_world_target)
+
     def _get_link_pose(self, ee_name):
         """Get the end effector position and orientation."""
         ee_id = mujoco.mj_name2id(self.mj_model, mujoco.mjtObj.mjOBJ_BODY, ee_name)
@@ -147,6 +156,7 @@ class MujocoTeleopController(BaseTeleopController):
                     self._update_robot_state()
                     self._update_ik()
                     self._update_gripper_target()
+                    self._update_mocap_target()
                     self._send_command()
 
                     # Step simulation and update viewer

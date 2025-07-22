@@ -36,8 +36,6 @@ Provide the exact shell commands needed to build, test, and run the project.
     ```sh
     # Commands to check for code style and formatting issues
     black .
-    isort .
-    flake8 .
     ```
 
 ---
