@@ -104,6 +104,68 @@ python scripts/hardware/teleop_r1lite_hardware.py
 
 This script initializes the [`GalaxeaR1LiteTeleopController`](xrobotoolkit_teleop/hardware/galaxea_r1_lite_teleop_controller.py) for mobile manipulator control, the controller communicates with the robot hardware via ROS.
 
+## Data Collection
+
+### Collecting Teleoperation Data
+
+The framework automatically logs teleoperation sessions when running hardware demos. Data collection includes:
+
+- **Robot joint states** and end effector poses
+- **Camera streams** from multiple viewpoints
+- **User input data** from XR controllers
+- **Timestamp synchronization** across all data streams
+
+#### Starting Data Collection
+
+1. **Run any hardware teleoperation script:**
+   ```bash
+   python scripts/hardware/teleop_dual_arx_r5_hardware.py
+   ```
+
+2. **Press B button** on the VR controller to start/stop logging
+   - First press: Start data logging
+   - Second press: Stop logging and save data to disk
+
+3. **Emergency stop:** Press right joystick click to discard current session
+
+#### Data Storage
+
+Collected data is saved as `.pkl` files in the `logs/` directory with timestamps:
+```
+logs/
+├── <robot_name>/
+│   └── teleop_log_YYYYMMDD_HHMMSS_<session_id>.pkl
+└── <another_robot>/
+    ├── teleop_log_YYYYMMDD_HHMMSS_<session_id>.pkl
+    └── teleop_log_YYYYMMDD_HHMMSS_<session_id>.pkl
+```
+
+### Validating Collected Data
+
+Use the provided analysis script to verify data integrity and examine collected datasets:
+
+```bash
+python scripts/misc/test_data_log_analysis.py logs/<robot_name>/teleop_log_YYYYMMDD_HHMMSS_1.pkl
+```
+
+This script will:
+- Display available data fields and their types
+- Verify robot states and camera images are properly saved
+- Show sample entries and data statistics
+- Count total logged entries
+
+### Converting to LeRobot Dataset
+
+For training imitation learning models, convert collected data to [LeRobot](https://github.com/huggingface/lerobot) format using this example conversion script:
+
+**Example:** [ARX Dual Arm Data Converter](https://github.com/zhigenzhao/openpi/blob/dev/finetuning/examples/arx_r5/arx_dual/convert_dual_arm_data_to_lerobot.py)
+
+This conversion enables:
+- Standardized dataset format for machine learning
+- Integration with LeRobot training pipelines  
+- Support for various imitation learning algorithms
+- Easy data sharing and reproducibility
+
 ## Teleoperation Guide
 
 ### Tracking Modes
