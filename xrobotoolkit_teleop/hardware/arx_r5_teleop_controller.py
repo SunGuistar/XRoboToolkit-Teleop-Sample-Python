@@ -35,7 +35,7 @@ DEFAULT_CAN_PORTS = {
 }
 
 # Default end-effector configuration for a single ARX R5 arm
-DEFAULT_ARX_R5_END_EFFECTOR_CONFIG = {
+DEFAULT_ARX_R5_MANIPULATOR_CONFIG = {
     "right_arm": {  # Using "right_arm" for consistency with base controller
         "link_name": "link6",  # URDF link name for the end-effector
         "pose_source": "right_controller",
@@ -50,7 +50,7 @@ DEFAULT_ARX_R5_END_EFFECTOR_CONFIG = {
     },
 }
 
-DEFAULT_DUAL_ARX_R5_END_EFFECTOR_CONFIG = {
+DEFAULT_DUAL_ARX_R5_MANIPULATOR_CONFIG = {
     "right_arm": {  # Using "right_arm" for consistency with base controller
         "link_name": "right_link6",  # URDF link name for the end-effector
         "pose_source": "right_controller",
@@ -82,7 +82,7 @@ class ARXR5TeleopController(HardwareTeleopController):
     def __init__(
         self,
         robot_urdf_path: str = DEFAULT_DUAL_ARX_R5_URDF_PATH,
-        end_effector_config: dict = DEFAULT_DUAL_ARX_R5_END_EFFECTOR_CONFIG,
+        manipulator_config: dict = DEFAULT_DUAL_ARX_R5_MANIPULATOR_CONFIG,
         can_ports: Dict[str, str] = DEFAULT_CAN_PORTS,
         R_headset_world: np.ndarray = R_HEADSET_TO_WORLD,
         scale_factor: float = DEFAULT_SCALE_FACTOR,
@@ -105,7 +105,7 @@ class ARXR5TeleopController(HardwareTeleopController):
         self.enable_camera_depth = enable_camera_depth
         super().__init__(
             robot_urdf_path=robot_urdf_path,
-            end_effector_config=end_effector_config,
+            manipulator_config=manipulator_config,
             R_headset_world=R_headset_world,
             floating_base=False,
             scale_factor=scale_factor,
@@ -121,7 +121,7 @@ class ARXR5TeleopController(HardwareTeleopController):
     def _placo_setup(self):
         super()._placo_setup()
         self.placo_arm_joint_slice: Dict[str, slice] = {}
-        for arm_name, config in self.end_effector_config.items():
+        for arm_name, config in self.manipulator_config.items():
             ee_link_name = config["link_name"]
             arm_prefix = ee_link_name.replace("link6", "")
             arm_joint_names = [f"{arm_prefix}joint{i}" for i in range(1, 7)]
@@ -175,8 +175,8 @@ class ARXR5TeleopController(HardwareTeleopController):
                 q_des = self.placo_robot.state.q[self.placo_arm_joint_slice[arm_name]].copy()
                 controller.set_joint_positions(q_des)
 
-            if "gripper_config" in self.end_effector_config[arm_name]:
-                gripper_config = self.end_effector_config[arm_name]["gripper_config"]
+            if "gripper_config" in self.manipulator_config[arm_name]:
+                gripper_config = self.manipulator_config[arm_name]["gripper_config"]
                 joint_name = gripper_config["joint_names"][0]
                 gripper_target = self.gripper_pos_target[arm_name][joint_name]
                 controller.set_catch_pos(gripper_target)
@@ -190,9 +190,7 @@ class ARXR5TeleopController(HardwareTeleopController):
                 arm: self.placo_robot.state.q[self.placo_arm_joint_slice[arm]].copy() for arm in self.arm_controllers
             },
             "gripper_target": {
-                arm: (
-                    self.gripper_pos_target[arm].copy() if "gripper_config" in self.end_effector_config[arm] else None
-                )
+                arm: (self.gripper_pos_target[arm].copy() if "gripper_config" in self.manipulator_config[arm] else None)
                 for arm in self.arm_controllers
             },
         }

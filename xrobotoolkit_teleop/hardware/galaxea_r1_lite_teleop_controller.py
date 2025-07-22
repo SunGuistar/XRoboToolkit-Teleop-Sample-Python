@@ -24,7 +24,7 @@ DEFAULT_SCALE_FACTOR = 1.0
 CONTROLLER_DEADZONE = 0.1
 
 # R1 Lite always has both arms - no single arm configuration needed
-DEFAULT_END_EFFECTOR_CONFIG = {
+DEFAULT_MANIPULATOR_CONFIG = {
     "right_arm": {
         "link_name": "right_gripper_link",
         "pose_source": "right_controller",
@@ -68,7 +68,7 @@ class GalaxeaR1LiteTeleopController(HardwareTeleopController):
     def __init__(
         self,
         robot_urdf_path: str = DEFAULT_DUAL_A1X_URDF_PATH,
-        end_effector_config: dict = DEFAULT_END_EFFECTOR_CONFIG,
+        manipulator_config: dict = DEFAULT_MANIPULATOR_CONFIG,
         R_headset_world: np.ndarray = R_HEADSET_TO_WORLD,
         scale_factor: float = DEFAULT_SCALE_FACTOR,
         chassis_velocity_scale: list[float] = [0.75, 0.75, 1.0],
@@ -82,7 +82,7 @@ class GalaxeaR1LiteTeleopController(HardwareTeleopController):
     ):
         super().__init__(
             robot_urdf_path=robot_urdf_path,
-            end_effector_config=end_effector_config,
+            manipulator_config=manipulator_config,
             R_headset_world=R_headset_world,
             floating_base=False,
             scale_factor=scale_factor,
@@ -101,7 +101,7 @@ class GalaxeaR1LiteTeleopController(HardwareTeleopController):
         # R1 Lite always has both left and right arms
         self.placo_arm_joint_slice = {}
         for arm_name in ["left_arm", "right_arm"]:
-            config = self.end_effector_config[arm_name]
+            config = self.manipulator_config[arm_name]
             ee_link_name = config["link_name"]
             arm_prefix = ee_link_name.replace("gripper_link", "")
             arm_joint_names = [f"{arm_prefix}arm_joint{i}" for i in range(1, 7)]

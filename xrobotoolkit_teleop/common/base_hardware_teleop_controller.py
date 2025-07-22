@@ -20,7 +20,7 @@ class HardwareTeleopController(BaseTeleopController, ABC):
     def __init__(
         self,
         robot_urdf_path: str,
-        end_effector_config: dict,
+        manipulator_config: dict,
         R_headset_world: np.ndarray,
         floating_base: bool,
         scale_factor: float,
@@ -35,7 +35,7 @@ class HardwareTeleopController(BaseTeleopController, ABC):
     ):
         super().__init__(
             robot_urdf_path=robot_urdf_path,
-            end_effector_config=end_effector_config,
+            manipulator_config=manipulator_config,
             floating_base=floating_base,
             R_headset_world=R_headset_world,
             scale_factor=scale_factor,
