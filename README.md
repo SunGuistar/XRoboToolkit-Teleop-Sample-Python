@@ -84,14 +84,77 @@ To run the teleoperation demo with the physical dual UR arms and Dynamixel-based
     python scripts/hardware/teleop_dual_ur5e_hardware.py --visualize_placo
     ```
 
-### Running Galaxea A1X arm
-To run the teleoperation demo with a Galaxea A1X arm, follow the [instruction](https://docs.galaxea-ai.com/zh/Guide/A1XY/A1XY_Startup_Demo_Guide/) to setup the ROS environment. In two command line windows, run the following scripts.
+### Running ARX R5 Hardware Demo
+
+To run the teleoperation demo with dual ARX R5 robotic arms:
+
 ```bash
-roslaunch HDAS A1XY.launch
+python scripts/hardware/teleop_dual_arx_r5_hardware.py
 ```
+
+This script initializes the [`ARXR5TeleopController`](xrobotoolkit_teleop/hardware/arx_r5_teleop_controller.py) for dual arm control with built-in grippers.
+
+### Running Galaxea R1 Lite Humanoid Demo
+
+To run the teleoperation demo with the Galaxea R1 Lite humanoid robot:
+
 ```bash
-python scripts/hardware/teleop_a1x_hardware.py
+python scripts/hardware/teleop_r1lite_hardware.py
 ```
+
+This script initializes the [`GalaxeaR1LiteTeleopController`](xrobotoolkit_teleop/hardware/galaxea_r1_lite_teleop_controller.py) for mobile manipulator control, the controller communicates with the robot hardware via ROS.
+
+## Teleoperation Guide
+
+### Tracking Modes
+
+The teleoperation system supports multiple tracking modes for controlling robot end effectors:
+
+#### 1. Controller Tracking (Default)
+- **Description**: Uses VR/AR controller poses to control robot end effectors
+- **Use Case**: Primary method for precise manipulation tasks
+- **Configuration**: Set `pose_source` to `"left_controller"` or `"right_controller"`
+- **Tracking**: Full 6DOF pose (position + orientation) or 3DOF position-only
+
+#### 2. Hand Tracking
+- **Description**: Uses hand pose estimation from XR cameras
+- **Use Case**: Natural hand gesture control
+
+#### 3. Head Tracking
+- **Description**: Uses headset pose for controlling specific robot components
+- **Use Case**: Head/neck control for humanoid robots or camera orientation
+
+#### 4. Motion Tracker Tracking
+- **Description**: Uses additional motion tracking devices for controlling auxiliary robot links
+- **Use Case**: Multi-point control (e.g., elbow position while controlling end effector)
+- **Configuration**: Add `motion_tracker` config with device serial and target link
+- **Note**: Not recommended for 6DOF arms like UR5e; better suited for redundant arms
+
+### Controller Button Functions
+
+When using VR controllers for teleoperation, the following button mappings apply:
+
+#### **Grip Buttons**
+- **Left Grip** (`left_grip`): Activates left arm teleoperation
+- **Right Grip** (`right_grip`): Activates right arm teleoperation
+- **Function**: Hold to enable arm control, release to deactivate
+
+#### **Trigger Buttons**
+- **Left Trigger** (`left_trigger`): Controls left gripper/hand
+- **Right Trigger** (`right_trigger`): Controls right gripper/hand
+- **Function**: Analog control (0.0 = fully open, 1.0 = fully closed)
+
+#### **System Buttons**
+- **A Button**: Reserved for system functions
+- **B Button**: Toggle data logging on/off
+  - Press once: Start logging
+  - Press again: Stop logging and save data
+
+#### **Joysticks/Touchpads**
+- **Left Joystick**: Linear velocity commands for mobile robots
+- **Right Joystick**: Angular velocity commands for mobile robots
+- **Right Axis Click**: stop data logging (discards current data)
+
 
 ## Dependencies
 XR Robotics dependencies:
@@ -104,7 +167,7 @@ Robotics Simulation and Solver
 Hardware Control
 - [`dynamixel_sdk`](https://github.com/ROBOTIS-GIT/DynamixelSDK.git): Dynamixel control functions, Apache-2.0 License
 - [`ur_rtde`](https://gitlab.com/sdurobotics/ur_rtde): interface for controlling and receiving data from a UR robot, MIT License
-- [`Galaxea A1XY`](https://docs.galaxea-ai.com/zh/Guide/A1XY/A1XY_Software_Introduction/#_8): Ros Noetic package for controlling A1XY manipulators
+- [`ARX R5 SDK`](https://github.com/zhigenzhao/R5/tree/dev/python_pkg): Interface for controlling ARX R5 robotic arms
 
 ## License
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
