@@ -1,6 +1,7 @@
 import os
 
 import tyro
+
 from xrobotoolkit_teleop.simulation.placo_teleop_controller import (
     PlacoTeleopController,
 )
@@ -19,6 +20,10 @@ def main(
             "link_name": "link20",
             "pose_source": "right_controller",
             "control_trigger": "right_grip",
+            "motion_tracker": {
+                "serial": "PC2310BLH9020740B",
+                "link_target": "link17",
+            },
         },
         "left_hand": {
             "link_name": "link11",
@@ -30,7 +35,7 @@ def main(
     # Create and initialize the teleoperation controller
     controller = PlacoTeleopController(
         robot_urdf_path=robot_urdf_path,
-        end_effector_config=config,
+        manipulator_config=config,
         scale_factor=scale_factor,
     )
 

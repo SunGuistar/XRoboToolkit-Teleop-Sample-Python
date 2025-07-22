@@ -1,6 +1,6 @@
 import tyro
 from xrobotoolkit_teleop.hardware.arx_r5_teleop_controller import (
-    DEFAULT_DUAL_ARX_R5_END_EFFECTOR_CONFIG,
+    DEFAULT_DUAL_ARX_R5_MANIPULATOR_CONFIG,
     DEFAULT_DUAL_ARX_R5_URDF_PATH,
     ARXR5TeleopController,
 )
@@ -20,7 +20,7 @@ def main(
     """
     controller = ARXR5TeleopController(
         robot_urdf_path=robot_urdf_path,
-        end_effector_config=DEFAULT_DUAL_ARX_R5_END_EFFECTOR_CONFIG,
+        manipulator_config=DEFAULT_DUAL_ARX_R5_MANIPULATOR_CONFIG,
         scale_factor=scale_factor,
         enable_camera=enable_camera,
         enable_log_data=enable_log_data,

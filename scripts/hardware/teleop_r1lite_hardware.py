@@ -1,7 +1,7 @@
 import tyro
 from xrobotoolkit_teleop.hardware.galaxea_r1_lite_teleop_controller import (
     DEFAULT_DUAL_A1X_URDF_PATH,
-    DEFAULT_END_EFFECTOR_CONFIG,
+    DEFAULT_MANIPULATOR_CONFIG,
     GalaxeaR1LiteTeleopController,
 )
 
@@ -19,7 +19,7 @@ def main(
     """
     controller = GalaxeaR1LiteTeleopController(
         robot_urdf_path=robot_urdf_path,
-        end_effector_config=DEFAULT_END_EFFECTOR_CONFIG,
+        manipulator_config=DEFAULT_MANIPULATOR_CONFIG,
         scale_factor=scale_factor,
         enable_log_data=enable_log_data,
         visualize_placo=visualize_placo,

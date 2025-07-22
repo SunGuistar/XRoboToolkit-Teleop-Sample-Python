@@ -21,16 +21,24 @@
 - Robot definition files: both `.xml` and `.urdf` files are required and they should be consistent with each other (same link names and joint names). The `.xml` file is for mujoco simulation, and the `.urdf` is for placo. Optionally, there should be 1 additional free floating body per end effector defined in the `.xml` file for visualization of commanded teleop targets in mujoco.
 - Teleoperation task is defined by a config dict
   - link_name: the name of end effector link as defined in mujoco .xml & .urdf files
-  - pose_source: name of the source of pose to be used by Pico client
+  - pose_source: name of the source of pose to be used by XrClient (e.g., `left_controller`, `right_controller`)
   - control_trigger: the key to define whether an arm control is active
+  - control_mode: optional field to specify tracking mode - "pose" (default, full 6DOF) or "position" (3DOF position only)
   - vis_target: name of the body for teleop target visualization
+  - motion_tracker: optional config for additional motion tracker to control another link in the manipulator (not recommended for 6DOF arms like UR5)
+    - serial: serial number of the motion tracker device
+    - link_target: name of the robot link to be controlled by the motion tracker
     ```python
     config = {
         "right_hand": {
-            "link_name": "right_tool0",
+            "link_name": "flange",
             "pose_source": "right_controller",
             "control_trigger": "right_grip",
-            "gripper_trigger": "right_trigger",
+            "control_mode": "position", # optional: "pose" (default) or "position"
+            "motion_tracker": {
+                "serial": "PC2310BLH9020740B",
+                "link_target": "link4",
+            },
             "vis_target": "right_target", # optional, only used in mujoco
         },
         "left_hand": {
@@ -94,8 +102,9 @@
 - Robot definition files: only `.urdf` file is required
 - Config
   - link_name: the name of end effector link as defined in mujoco .xml & .urdf files
-  - pose_source: name of the source of pose to be used by Pico client
+  - pose_source: name of the source of pose to be used by XrClient (e.g., `left_controller`, `right_controller`)
   - control_trigger: the key to define whether an arm control is active
+  - control_mode: optional field to specify tracking mode - "pose" (default, full 6DOF) or "position" (3DOF position only)
   - gripper_trigger: name of the key mapped to this gripper from the controller
     ```python  
     DEFAULT_END_EFFECTOR_CONFIG = {
@@ -118,40 +127,38 @@
     python scripts/hardware/teleop_dual_ur5e_hardware.py
     ```
 
-# Galaxea A1X Hardware teleoperation
+# ARX R5 Hardware teleoperation
 - Robot definition files: only `.urdf` is needed.
-- Config: same configuration as A1X simulation
+- Config: Dual arm configuration with gripper support.
   ```python
-    DEFAULT_DUAL_END_EFFECTOR_CONFIG = {
-      "right_arm": {
-          "link_name": "right_gripper_link",
-          "pose_source": "right_controller",
-          "control_trigger": "right_grip",
-          "gripper_config": {
-              "type": "parallel",
-              "gripper_trigger": "right_trigger",
-              "joint_names": ["right_gripper_finger_joint1",],
-              "open_pos": [-2.0,],
-              "close_pos": [0.0,],
-          },
-      },
-      "left_arm": {
-          "link_name": "left_gripper_link",
-          "pose_source": "left_controller",
-          "control_trigger": "left_grip",
-          "gripper_config": {
-              "type": "parallel",
-              "gripper_trigger": "left_trigger",
-              "joint_names": [
-                  "left_gripper_finger_joint1",
-              ],
-              "open_pos": [-2.0,],
-              "close_pos": [0.0,],
-          },
-      },
-  }
+    DEFAULT_DUAL_ARX_R5_MANIPULATOR_CONFIG = {
+        "right_arm": {
+            "link_name": "right_link6",
+            "pose_source": "right_controller",
+            "control_trigger": "right_grip",
+            "gripper_config": {
+                "type": "parallel",
+                "gripper_trigger": "right_trigger",
+                "joint_names": ["right_joint7"],
+                "open_pos": [4.9],
+                "close_pos": [0.0],
+            },
+        },
+        "left_arm": {
+            "link_name": "left_link6",
+            "pose_source": "left_controller",
+            "control_trigger": "left_grip",
+            "gripper_config": {
+                "type": "parallel",
+                "gripper_trigger": "left_trigger",
+                "joint_names": ["left_joint7"],
+                "open_pos": [4.9],
+                "close_pos": [0.0],
+            },
+        },
+    }
   ```
 - run the following script
   ```bash
-  python scripts/hardware/teleop_dual_a1x_hardware.py
+  python scripts/hardware/teleop_dual_arx_r5_hardware.py
   ```

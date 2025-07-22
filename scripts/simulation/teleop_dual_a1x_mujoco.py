@@ -61,7 +61,7 @@ def main(
     controller = MujocoTeleopController(
         xml_path=xml_path,
         robot_urdf_path=robot_urdf_path,
-        end_effector_config=config,
+        manipulator_config=config,
         scale_factor=scale_factor,
         visualize_placo=visualize_placo,
     )

@@ -1,40 +1,61 @@
-# Gemini Project Configuration (`GEMINI.md`)
+# CLAUDE.md
 
-This file provides project-specific guidance and configuration for the Gemini agent to ensure its actions are aligned with the project's standards, conventions, and requirements.
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## 1. Project Overview
 
-*   **Purpose:** Teleoperation demo with MuJoCo and UR5 robot.
-*   **Tech Stack:** Python, MuJoCo, ROS (for some parts), Pybind11, UR RTDE.
-*   **Key Features:** Real-time teleoperation of various robot arms (UR5e, ARX, Galaxea) in both simulation and hardware. Supports bimanual setups and dexterous hands (Shadow Hand, Inspire Hand).
+*   **Purpose:** XR-based teleoperation framework for controlling robots through VR/AR devices in both simulation and hardware environments.
+*   **Tech Stack:** Python 3.10+, MuJoCo (physics simulation), Placo (inverse kinematics), XRoboToolkit SDK (VR/AR interface), various robot hardware APIs.
+*   **Architecture:** Controller-based design with base classes extended for specific simulation and hardware environments. Multi-threaded execution for real-time control, data logging, and camera streaming.
 
 ---
 
 ## 2. Build, Test, and Run Commands
 
-Provide the exact shell commands needed to build, test, and run the project.
-
-*   **Build:**
+*   **Environment Setup (Recommended):**
     ```sh
-    # The command to setup new conda environment for this project
-    ./setup_conda.sh --conda
-
-    # the command to activate the conda environment
+    # Setup conda environment (Ubuntu 22.04 tested)
+    ./setup_conda.sh --conda xr-robotics
     conda activate xr-robotics
-    
-    # the command to install the project within the conda env
     ./setup_conda.sh --install
     ```
 
-*   **Run Main Application / Simulation:**
+*   **Alternative System Installation:**
     ```sh
-    # Command to run a primary simulation or hardware script
-    python scripts/simulation/teleop_dual_ur5e_mujoco.py
+    # System-wide installation (if not using conda)
+    ./setup.sh
     ```
 
-*   **Linting & Formatting:**
+*   **Common Simulation Scripts:**
     ```sh
-    # Commands to check for code style and formatting issues
+    # Dual UR5e arms in MuJoCo
+    python scripts/simulation/teleop_dual_ur5e_mujoco.py
+    
+    # ARX X7S with Placo visualization
+    python scripts/simulation/teleop_x7s_placo.py
+    
+    # Shadow Hand dexterous manipulation
+    python scripts/simulation/teleop_shadow_hand_mujoco.py
+    
+    # Flexiv Rizon4s robot
+    python scripts/simulation/teleop_flexiv_rizon4s_mujoco.py
+    ```
+
+*   **Hardware Scripts:**
+    ```sh
+    # Dual UR5e with reset option
+    python scripts/hardware/teleop_dual_ur5e_hardware.py --reset
+    
+    # ARX R5 robotic arm
+    python scripts/hardware/teleop_arx_hardware.py
+    
+    # Galaxea R1 Lite humanoid
+    python scripts/hardware/teleop_r1lite_hardware.py
+    ```
+
+*   **Code Formatting:**
+    ```sh
+    # Format all Python code (line length: 120)
     black .
     ```
 
@@ -42,114 +63,69 @@ Provide the exact shell commands needed to build, test, and run the project.
 
 ## 3. Dependency Management
 
-*   **Primary Tool:** pip and shell scripts.
-*   **Installation Command:**
-    ```sh
-    # The command to setup new conda environment for this project
-    ./setup_conda.sh --conda
-
-    # the command to activate the conda environment
-    conda activate xr-robotics
-
-    # the command to install the project within the conda env
-    ./setup_conda.sh --install
-    ```
-*   **Configuration File(s):** `pyproject.toml`, `setup.sh`
+*   **Primary Tools:** Conda (recommended), pip, custom shell scripts
+*   **Key Dependencies:** 
+    - XRoboToolkit SDK (proprietary VR/AR interface)
+    - placo==0.9.4 (inverse kinematics solver)
+    - mujoco (physics simulation)
+    - ur_rtde (Universal Robots interface)
+    - dynamixel-sdk (servo control)
+*   **Configuration Files:** `pyproject.toml`, `setup_conda.sh`, `setup.sh`
 
 ---
 
 ## 4. Coding Style and Conventions
 
 *   **Code Style:** PEP 8
-*   **Formatter:** `black`
+*   **Formatter:** `black` (line length: 120)
 *   **Naming Conventions:** `snake_case` for variables and functions, `PascalCase` for classes.
-*   **Key Architectural Patterns:** The project uses a controller-based architecture. A `BaseTeleopController` is extended for different simulation (`MujocoTeleopController`, `PlacoTeleopController`) and hardware environments. Hardware interfaces are abstracted in `xrobotoolkit_teleop/hardware/interface/`.
+*   **Key Architectural Patterns:** Controller-based architecture with inheritance hierarchy. `BaseTeleopController` provides common interface, extended by `HardwareTeleopController` for hardware-specific features (threading, logging, cameras).
 
-### Code Structure
+### Core Architecture
 
-The project follows a modular structure, with a clear separation of concerns between teleoperation logic, hardware interfaces, and simulation environments.
+The project uses a layered architecture with clear separation of concerns:
 
-*   **`scripts/`**: This directory contains high-level scripts for running teleoperation tasks. It is divided into `hardware/` and `simulation/` subdirectories, which contain scripts for controlling physical robots and simulated robots, respectively.
-*   **`xrobotoolkit_teleop/`**: This is the core Python package that contains all the teleoperation logic.
-    *   **`common/`**: This subdirectory contains the base classes and common utilities that are shared across the project.
-        *   `base_teleop_controller.py`: This file defines the abstract base class for all teleoperation controllers. It provides a common interface for controlling robots in both simulation and hardware.
-    *   **`hardware/`**: This subdirectory contains the code for controlling physical robots.
-        *   `interface/`: This subdirectory contains the low-level wrappers for communicating with different hardware components, such as robots, grippers, and cameras.
-    *   **`simulation/`**: This subdirectory contains the code for controlling simulated robots.
-    *   **`utils/`**: This subdirectory contains utility functions that are used throughout the project.
+*   **Base Layer (`xrobotoolkit_teleop/common/`):**
+    - `BaseTeleopController`: Abstract base class defining teleoperation interface
+    - `HardwareTeleopController`: Adds hardware-specific features (threading, logging, camera support)
+
+*   **Interface Layer (`xrobotoolkit_teleop/hardware/interface/`):**
+    - Low-level wrappers for hardware communication (robots, grippers, cameras)
+    - Each hardware type has its own interface class (e.g., `RobotiqGripperInterface`, `URRobotInterface`)
+
+*   **Controller Layer:**
+    - **Simulation**: `MujocoTeleopController`, `PlacoTeleopController`
+    - **Hardware**: Robot-specific controllers (e.g., `ARXTeleopController`, `DualArmURController`)
+
+*   **Control Flow:**
+    1. XR device captures user input → `XrClient`
+    2. Pose processing and IK target updates → `BaseTeleopController`
+    3. Inverse kinematics solving → Placo solver
+    4. Command execution → Hardware/simulation interfaces
+    5. Concurrent: Data logging, camera streaming, visualization
 
 ---
 
 ## 5. Key Files and Directories
 
-List important files or directories that the agent should be aware of.
-
 *   `pyproject.toml`: Project metadata and Python package dependencies.
-*   `setup.sh`: Main installation script that clones git dependencies and installs the project.
-*   `assets/`: Contains all URDF models and meshes for robots.
-*   `scripts/hardware/`: High-level teleoperation scripts for physical hardware.
-*   `scripts/simulation/`: High-level teleoperation scripts for simulations (e.g., MuJoCo, Placo).
-*   `xrobotoolkit_teleop/`: The core Python package containing all teleoperation logic.
-*   `xrobotoolkit_teleop/common/base_teleop_controller.py`: The abstract base class for all teleop controllers.
-*   `xrobotoolkit_teleop/hardware/interface/`: Low-level wrappers for hardware communication (robots, grippers, cameras).
-*   `xrobotoolkit_teleop/simulation/`: Controllers for different simulation environments.
-*   `dependencies/`: Directory where git dependencies are cloned during setup.
+*   `setup_conda.sh`, `setup.sh`: Installation scripts for conda/system environments.
+*   `assets/`: Contains URDF models, meshes, and robot configurations.
+*   `scripts/simulation/`: High-level teleoperation scripts for MuJoCo and Placo environments.
+*   `scripts/hardware/`: High-level teleoperation scripts for physical robots.
+*   `xrobotoolkit_teleop/`: Core Python package containing all teleoperation logic.
+*   `xrobotoolkit_teleop/common/base_teleop_controller.py`: Abstract base class for all controllers.
+*   `xrobotoolkit_teleop/common/base_hardware_teleop_controller.py`: Hardware base class with threading and logging.
+*   `xrobotoolkit_teleop/hardware/interface/`: Low-level hardware communication wrappers.
+*   `xrobotoolkit_teleop/simulation/`: Controllers for MuJoCo and Placo environments.
+*   `dependencies/`: External dependencies cloned during setup (ARX SDK, XRoboToolkit).
 
 ---
 
-## 6. User Preferences & Notes
+## 6. Development Guidelines
 
-*   Use `black` for linting and formatting.
-*   Prefer adding new teleoperation scripts in the `scripts/` directory, following the existing hardware/simulation structure.
-*   Always use absolute paths for assets when loading URDFs, leveraging the `path_utils` where appropriate.
-
----
-
-## 7. Technical Implementation Details
-
-This section provides more detailed descriptions of the teleoperation examples, sourced from `teleop_details.md`.
-
-### XR Client
-- Connects to the XR device using the Python binding of [xrobotoolkit-sdk](https://github.com/XR-Robotics/XRoboToolkit-PC-Service-Pybind).
-- The client is implemented in `xrobotoolkit_teleop/utils/xr_client.py`.
-
-### Placo
-- [PlaCo](https://placo.readthedocs.io/en/latest/) is used for whole-body inverse kinematics and dynamics based on a Quadratic Programming solver.
-- **Main Placo Tasks Used:**
-  - **Frame Task:** Constrains the position and orientation of an end-effector frame.
-  - **Manipulability Task:** Ensures stable robot motion near singularities or workspace limits.
-  - **Kinetic Energy Regularization:** Minimizes the system's kinetic energy.
-  - **Joint Task:** Regularizes the joint state towards a default state.
-
-### Mujoco Simulation
-- **Robot Definition:** Requires both `.xml` (for MuJoCo) and `.urdf` (for Placo) files, which must be consistent. The `.xml` can optionally define extra bodies for visualizing teleop targets.
-- **Teleoperation Task Config:** A dictionary defines the teleop setup for each hand/arm.
-    ```python
-    config = {
-        "right_hand": {
-            "link_name": "right_tool0",
-            "pose_source": "right_controller",
-            "control_trigger": "right_grip",
-            "vis_target": "right_target", # Optional: for MuJoCo visualization
-        },
-        # ... and so on for the left hand
-    }
-    ```
-- **Parallel Gripper Control:** Gripper behavior is configured within the end-effector dictionary. It specifies the joint name, trigger key, and open/closed positions.
-    ```python
-    "gripper_config": {
-        "type": "parallel",
-        "gripper_trigger": "right_trigger",
-        "joint_names": ["right_gripper_finger_joint1"],
-        "open_pos": [0.05],
-        "close_pos": [0.0],
-    }
-    ```
-  - **Note:** In the MuJoCo `.xml`, one gripper joint is actuated, and others are linked via equality constraints.
-
-### Hardware Teleoperation
-- **Robot Definition:** Only a `.urdf` file is required.
-- **Config:** Similar to the simulation config, it maps arms to controller inputs and defines the end-effector link.
-- **Examples:**
-  - **Dual UR5e:** `scripts/hardware/teleop_dual_ur5e_hardware.py`
-  - **Galaxea A1X:** `scripts/hardware/teleop_dual_a1x_hardware.py`
+*   **Adding New Robots:** Extend appropriate base controller class, implement required abstract methods, create interface wrapper in `hardware/interface/` if needed.
+*   **Threading Model:** Hardware controllers use separate threads for IK computation, robot control, data logging, and camera streaming.
+*   **Configuration:** Robot-specific settings defined as dictionaries in controller classes (joint limits, IK constraints, camera parameters).
+*   **Asset Paths:** Always use absolute paths for URDF loading, leveraging `path_utils` module for cross-platform compatibility.
+*   **Error Handling:** Hardware controllers implement safety checks and manipulability constraints to prevent dangerous robot movements.
