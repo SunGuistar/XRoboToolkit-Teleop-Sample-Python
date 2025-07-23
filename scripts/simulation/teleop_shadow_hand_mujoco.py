@@ -51,7 +51,10 @@ def main(
         viewer.cam.lookat = [0.2, 0, 0.2]
 
         while True:
-            hand_state = np.array(xr_client.get_hand_tracking_state(hand_type))
+            hand_state = xr_client.get_hand_tracking_state(hand_type)
+            if hand_state is None:
+                continue
+            hand_state = np.array(hand_state)
             mediapipe_hand_state = pico_hand_state_to_mediapipe(hand_state)
             pin_q = dextracker.retarget(mediapipe_hand_state)
             mj_qpos = calc_mujoco_qpos_from_pin_q(mj_model, pin_model, pin_q)

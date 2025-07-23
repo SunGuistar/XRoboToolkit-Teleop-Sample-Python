@@ -74,14 +74,19 @@ class XrClient:
         """Returns the current timestamp in nanoseconds (int)."""
         return xrt.get_time_stamp_ns()
 
-    def get_hand_tracking_state(self, hand: str) -> np.ndarray:
+    def get_hand_tracking_state(self, hand: str) -> np.ndarray | None:
         """Returns the hand tracking state for the specified hand.
         Valid hands: "left", "right".
         State is a 27 x 7 numpy array, where each row is [x, y, z, qx, qy, qz, qw] for each joint.
+        Returns None if hand tracking is inactive (low quality).
         """
         if hand.lower() == "left":
+            if not xrt.get_left_hand_is_active():
+                return None
             return xrt.get_left_hand_tracking_state()
         elif hand.lower() == "right":
+            if not xrt.get_right_hand_is_active():
+                return None
             return xrt.get_right_hand_tracking_state()
         else:
             raise ValueError(f"Invalid hand: {hand}. Valid hands are: 'left', 'right'.")
@@ -121,6 +126,24 @@ class XrClient:
             }
 
         return tracker_data
+
+    def get_body_tracking_data(self) -> dict | None:
+        """Returns complete body tracking data or None if unavailable.
+
+        Returns:
+            Dict with keys: 'poses', 'velocities', 'accelerations', 'imu_timestamps', 'body_timestamp'
+            - poses: (24, 7) array [x,y,z,qx,qy,qz,qw] for each joint
+            - velocities: (24, 6) array [vx,vy,vz,wx,wy,wz] for each joint
+            - accelerations: (24, 6) array [ax,ay,az,wax,way,waz] for each joint
+        """
+        if not xrt.is_body_data_available():
+            return None
+
+        return {
+            "poses": xrt.get_body_joints_pose(),
+            "velocities": xrt.get_body_joints_velocity(),
+            "accelerations": xrt.get_body_joints_acceleration(),
+        }
 
     def close(self):
         xrt.close()

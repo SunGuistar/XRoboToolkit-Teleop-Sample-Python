@@ -43,7 +43,10 @@ def main(
 
     while True:
         viz.display(robot.state.q)
-        hand_state = np.array(xr_client.get_hand_tracking_state(hand_type))
+        hand_state = xr_client.get_hand_tracking_state(hand_type)
+        if hand_state is None:
+            continue
+        hand_state = np.array(hand_state)
         if np.all(hand_state == 0):
             print("all zero, ignore")
             continue
