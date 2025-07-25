@@ -107,7 +107,12 @@ class HardwareTeleopController(BaseTeleopController, ABC):
         data_entry.update(self._get_robot_state_for_logging())
 
         if self.enable_camera and self.camera_interface:
-            frames = self.camera_interface.get_frames()
+            # Use compressed frames for logging to reduce file size
+            if hasattr(self.camera_interface, 'get_compressed_frames'):
+                frames = self.camera_interface.get_compressed_frames()
+            else:
+                # Fallback to regular frames for compatibility
+                frames = self.camera_interface.get_frames()
             if frames:
                 data_entry["image"] = frames
 

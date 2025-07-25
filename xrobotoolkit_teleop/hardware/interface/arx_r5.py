@@ -114,6 +114,7 @@ class ARXR5Interface:
 
     def set_catch_pos(self, pos: float):
         self.arm.set_catch(pos)
+        self.arm.set_arm_status(5)
 
     def get_joint_positions(self, joint_names: Optional[Union[str, List[str]]] = None) -> Union[float, List[float]]:
         """

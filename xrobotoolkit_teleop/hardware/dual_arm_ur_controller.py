@@ -39,7 +39,7 @@ from xrobotoolkit_teleop.utils.parallel_gripper_utils import (
 from xrobotoolkit_teleop.utils.path_utils import ASSET_PATH
 
 DEFAULT_DUAL_ARM_URDF_PATH = os.path.join(ASSET_PATH, "universal_robots_ur5e/dual_ur5e.urdf")
-DEFAULT_SCALE_FACTOR = 1.0
+DEFAULT_SCALE_FACTOR = 0.8
 
 DEFAULT_MANIPULATOR_CONFIG = {
     "left_arm": {

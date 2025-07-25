@@ -3,6 +3,7 @@ import time
 
 import numpy as np
 from .base_camera import BaseCameraInterface
+from ...utils.image_utils import compress_image_to_jpg
 import pyrealsense2 as rs
 
 
@@ -18,6 +19,8 @@ class RealSenseCameraInterface(BaseCameraInterface):
         fps: int = 30,
         serial_numbers: list[str] = None,
         enable_depth: bool = True,
+        enable_compression: bool = True,
+        jpg_quality: int = 85,
     ):
         """
         Initializes the RealSense camera interface.
@@ -29,17 +32,24 @@ class RealSenseCameraInterface(BaseCameraInterface):
             serial_numbers (list[str], optional): A list of serial numbers of the cameras to use.
                                                   If None, all connected cameras will be used.
             enable_depth (bool): Whether to enable the depth stream.
+            enable_compression (bool): Whether to store compressed JPG bytes alongside raw frames.
+            jpg_quality (int): JPG compression quality (1-100, higher is better quality).
         """
         self.width = width
         self.height = height
         self.fps = fps
         self.serial_numbers = serial_numbers
         self.enable_depth = enable_depth
+        self.enable_compression = enable_compression
+        self.jpg_quality = jpg_quality
         self.pipelines = {}
         self.configs = {}
         self.align = {}
 
+        # Raw frames for real-time access
         self.frames_dict = {}
+        # Compressed frames for logging
+        self.compressed_frames_dict = {}
         self.frames_lock = threading.Lock()  # Thread-safe access to frames
         self.last_update_time = {}  # Track last successful frame update per camera
 
@@ -139,6 +149,22 @@ class RealSenseCameraInterface(BaseCameraInterface):
         # Thread-safe update of frames dictionary
         with self.frames_lock:
             self.frames_dict = frames_dict
+            
+            # Store compressed frames for logging if enabled
+            if self.enable_compression:
+                compressed_dict = {}
+                for serial, frame_data in frames_dict.items():
+                    color_compressed = compress_image_to_jpg(frame_data["color"], self.jpg_quality) if frame_data["color"] is not None else None
+                    depth_compressed = compress_image_to_jpg(frame_data["depth"], self.jpg_quality) if frame_data["depth"] is not None else None
+                    
+                    compressed_dict[serial] = {
+                        "color": color_compressed,
+                        "depth": depth_compressed,
+                        "timestamp_us": frame_data["timestamp_us"],
+                        "color_format": frame_data["color_format"],
+                        "depth_format": frame_data["depth_format"],
+                    }
+                self.compressed_frames_dict = compressed_dict
 
     def get_frames(self):
         """
@@ -151,6 +177,18 @@ class RealSenseCameraInterface(BaseCameraInterface):
         """
         with self.frames_lock:
             return self.frames_dict.copy()
+
+    def get_compressed_frames(self):
+        """
+        Returns the compressed frames from all cameras for logging (thread-safe).
+
+        Returns:
+            dict: A dictionary where keys are camera serial numbers and values are
+                  another dictionary containing compressed 'color' and 'depth' JPG bytes,
+                  the 'timestamp_us' of the frame, and stream format information.
+        """
+        with self.frames_lock:
+            return self.compressed_frames_dict.copy()
 
     def get_frame(self, serial: str):
         """

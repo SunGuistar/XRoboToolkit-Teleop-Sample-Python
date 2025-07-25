@@ -1,4 +1,5 @@
 import tyro
+
 from xrobotoolkit_teleop.hardware.galaxea_r1_lite_teleop_controller import (
     DEFAULT_DUAL_A1X_URDF_PATH,
     DEFAULT_MANIPULATOR_CONFIG,
@@ -13,6 +14,7 @@ def main(
     visualize_placo: bool = False,
     control_rate_hz: int = 100,
     log_dir: str = "logs/galaxea_r1_lite",
+    chassis_velocity_scale: list[float] = [0.5, 0.5, 0.5],
 ):
     """
     Main function to run the Galaxea R1 Lite teleoperation.
@@ -25,6 +27,7 @@ def main(
         visualize_placo=visualize_placo,
         control_rate_hz=control_rate_hz,
         log_dir=log_dir,
+        chassis_velocity_scale=chassis_velocity_scale,
     )
     controller.run()
 

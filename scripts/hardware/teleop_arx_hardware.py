@@ -14,6 +14,8 @@ def main(
     visualize_placo: bool = False,
     control_rate_hz: int = 50,
     log_dir: str = "logs/arx_r5",
+    enable_camera_compression: bool = True,
+    camera_jpg_quality: int = 85,
 ):
     """
     Main function to run the ARX R5 teleoperation.
@@ -28,6 +30,8 @@ def main(
         visualize_placo=visualize_placo,
         control_rate_hz=control_rate_hz,
         log_dir=log_dir,
+        enable_camera_compression=enable_camera_compression,
+        camera_jpg_quality=camera_jpg_quality,
     )
     controller.run()
 

@@ -55,8 +55,8 @@ class A1XController:
         """
         Callback function to handle joint state updates.
         """
-        self.qpos = msg.position[:6]
-        self.qvel = msg.velocity[:6]
+        self.qpos = list(msg.position[:6])
+        self.qvel = list(msg.velocity[:6])
         self.qpos_gripper = [msg.position[6]]
         self.qvel_gripper = [msg.velocity[6]]
         if self.q_des is None:
@@ -186,6 +186,19 @@ class R1LiteChassisController:
             tuple: (vx, vy, omega)
         """
         return tuple(self.chassis_vel)
+
+    def get_velocity_command(self):
+        """
+        Get the current velocity command as a 3D numpy array.
+
+        Returns:
+            numpy.ndarray: 3D array containing [vx, vy, omega]
+        """
+        return [
+            self.twist_stamped_cmd.twist.linear.x,
+            self.twist_stamped_cmd.twist.linear.y,
+            self.twist_stamped_cmd.twist.angular.z,
+        ]
 
     def stop_chassis(self):
         """

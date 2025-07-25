@@ -176,7 +176,9 @@ class GalaxeaR1LiteTeleopController(HardwareTeleopController):
                         "color": "/hdas/camera_head/right_raw/image_raw_color/compressed",
                     },
                 }
-                self.camera_interface = RosCameraInterface(camera_topics=camera_topics)
+                self.camera_interface = RosCameraInterface(
+                    camera_topics=camera_topics, width=424, height=240, enable_depth=False
+                )
                 self.camera_interface.start()
                 print("Camera initialized successfully.")
             except Exception as e:
@@ -236,6 +238,7 @@ class GalaxeaR1LiteTeleopController(HardwareTeleopController):
             "qpos_des": {arm: controller.q_des for arm, controller in self.arm_controllers.items()},
             "gripper_qpos": {arm: controller.qpos_gripper for arm, controller in self.arm_controllers.items()},
             "gripper_qpos_des": {arm: controller.q_des_gripper for arm, controller in self.arm_controllers.items()},
+            "chassis_velocity_cmd": self.chassis_controller.get_velocity_command(),
         }
 
     def _should_keep_running(self) -> bool:

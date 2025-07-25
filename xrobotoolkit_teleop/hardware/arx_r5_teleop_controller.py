@@ -97,12 +97,17 @@ class ARXR5TeleopController(HardwareTeleopController):
         camera_height: int = 240,
         camera_fps: int = 60,
         enable_camera_depth: bool = False,
+        enable_camera_compression: bool = True,
+        camera_jpg_quality: int = 85,
     ):
         self.can_ports = can_ports
         self.camera_serial_dict = camera_serial_dict
         self.camera_width = camera_width
         self.camera_height = camera_height
+        self.camera_fps = camera_fps
         self.enable_camera_depth = enable_camera_depth
+        self.enable_camera_compression = enable_camera_compression
+        self.camera_jpg_quality = camera_jpg_quality
         super().__init__(
             robot_urdf_path=robot_urdf_path,
             manipulator_config=manipulator_config,
@@ -155,6 +160,8 @@ class ARXR5TeleopController(HardwareTeleopController):
                     fps=self.camera_fps,
                     serial_numbers=list(self.camera_serial_dict.values()),
                     enable_depth=self.enable_camera_depth,
+                    enable_compression=self.enable_camera_compression,
+                    jpg_quality=self.camera_jpg_quality,
                 )
                 self.camera_interface.start()
                 print("Camera initialized successfully.")

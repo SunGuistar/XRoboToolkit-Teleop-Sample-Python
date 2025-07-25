@@ -11,12 +11,14 @@ Usage:
     If no file path is provided, it will analyze the first .pkl file found in logs/.
 """
 
-import os
 import pickle
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional
 import numpy as np
+import cv2
+
+from xrobotoolkit_teleop.utils.image_utils import decompress_jpg_to_image
 
 
 class TeleopDataAnalyzer:
@@ -66,6 +68,13 @@ class TeleopDataAnalyzer:
         """
         if isinstance(value, np.ndarray):
             return f"numpy.ndarray(shape={value.shape}, dtype={value.dtype})"
+        elif isinstance(value, tuple):
+            if len(value) == 0:
+                return "tuple(empty)"
+            elif len(value) < 10:
+                return f"tuple(length={len(value)}, types={[type(x).__name__ for x in value]})"
+            else:
+                return f"tuple(length={len(value)}, sample_types={[type(value[i]).__name__ for i in [0, len(value)//2, -1]]})"
         elif isinstance(value, list):
             if len(value) == 0:
                 return "list(empty)"
@@ -79,6 +88,8 @@ class TeleopDataAnalyzer:
             return f"{type(value).__name__}({value})"
         elif isinstance(value, str):
             return f"str(length={len(value)}, preview='{value[:50]}{'...' if len(value) > 50 else ''}')"
+        elif isinstance(value, bytes):
+            return f"bytes(length={len(value)}, compressed_image_data)"
         else:
             return f"{type(value).__name__}"
     
@@ -254,38 +265,160 @@ class TeleopDataAnalyzer:
                 print(f"      Min dt: {dt_values.min():.4f}s")
                 print(f"      Max dt: {dt_values.max():.4f}s")
     
+    def display_camera_images(self, entry_index: int = 0):
+        """Display camera images from a specific entry using cv2."""
+        if not self.data or entry_index >= len(self.data):
+            print("❌ No data or invalid entry index")
+            return
+        
+        entry = self.data[entry_index]
+        
+        if 'image' not in entry:
+            print("❌ No image data found in entry")
+            return
+            
+        image_data = entry['image']
+        if not isinstance(image_data, dict):
+            print("❌ Image data is not in expected dictionary format")
+            return
+        
+        print(f"\n📸 Displaying camera images from entry {entry_index}")
+        print("Press any key to close each image window")
+        
+        for cam_name, cam_data in image_data.items():
+            try:
+                # Handle different image data structures
+                img_array = None
+                
+                if isinstance(cam_data, np.ndarray):
+                    img_array = cam_data
+                elif isinstance(cam_data, dict):
+                    # Look for common image stream keys
+                    for stream_key in ['color', 'rgb', 'image']:
+                        if stream_key in cam_data:
+                            stream_data = cam_data[stream_key]
+                            if isinstance(stream_data, np.ndarray):
+                                img_array = stream_data
+                                break
+                            elif isinstance(stream_data, bytes):
+                                # Decompress JPG bytes to numpy array
+                                img_array = decompress_jpg_to_image(stream_data)
+                                break
+                elif isinstance(cam_data, bytes):
+                    # Handle direct compressed image bytes
+                    img_array = decompress_jpg_to_image(cam_data)
+                
+                if img_array is not None:
+                    # Ensure the image is in the right format for cv2
+                    if len(img_array.shape) == 3:
+                        # Convert RGB to BGR for cv2 display if needed
+                        if img_array.shape[2] == 3:
+                            img_display = cv2.cvtColor(img_array, cv2.COLOR_RGB2BGR)
+                        else:
+                            img_display = img_array
+                    else:
+                        img_display = img_array
+                    
+                    # Create window and display image
+                    window_name = f"Camera: {cam_name} (Entry {entry_index})"
+                    cv2.namedWindow(window_name, cv2.WINDOW_AUTOSIZE)
+                    cv2.imshow(window_name, img_display)
+                    
+                    print(f"  📷 {cam_name}: {img_array.shape} - Press any key to continue")
+                    cv2.waitKey(0)
+                    cv2.destroyWindow(window_name)
+                else:
+                    print(f"  ⚠️  {cam_name}: No displayable image data found")
+                    
+            except Exception as e:
+                print(f"  ❌ Error displaying {cam_name}: {e}")
+        
+        # Clean up any remaining windows
+        cv2.destroyAllWindows()
+        print("✅ Image display complete")
+
     def show_sample_data(self, num_samples: int = 3):
-        """Show sample data from a few entries."""
+        """Show sample data from first, middle, and last entries."""
         if not self.data:
             return
         
         print("\n" + "="*80)
-        print(f"SAMPLE DATA (first {min(num_samples, len(self.data))} entries)")
+        print(f"SAMPLE DATA (first, middle, and last entries)")
         print("="*80)
         
-        for i in range(min(num_samples, len(self.data))):
-            print(f"\n📋 Entry {i}:")
+        # Determine which entries to show
+        if len(self.data) == 1:
+            sample_indices = [0]
+        elif len(self.data) == 2:
+            sample_indices = [0, 1]
+        else:
+            middle_idx = len(self.data) // 2
+            sample_indices = [0, middle_idx, len(self.data) - 1]
+        
+        for i in sample_indices:
+            print(f"\n📋 Entry {i} (of {len(self.data) - 1}):")
             entry = self.data[i]
             
             for key, value in entry.items():
                 if key == 'timestamp':
                     print(f"   {key}: {value:.6f}")
                 elif key == 'image' and isinstance(value, dict):
-                    print(f"   {key}: dict with {len(value)} cameras")
-                    for cam_name in value.keys():
-                        if isinstance(value[cam_name], np.ndarray):
-                            print(f"      {cam_name}: array{value[cam_name].shape}")
+                    print(f"   {key}: dict with cameras: {list(value.keys())}")
+                    for cam_name, cam_data in value.items():
+                        if isinstance(cam_data, np.ndarray):
+                            img_shape = cam_data.shape
+                            print(f"      {cam_name}: {img_shape} (H×W×C: {img_shape[0]}×{img_shape[1]}×{img_shape[2] if len(img_shape) > 2 else 'N/A'})")
+                        elif isinstance(cam_data, dict):
+                            # Handle nested camera structure (e.g., {'color': image_data})
+                            if any(isinstance(v, np.ndarray) for v in cam_data.values()):
+                                print(f"      {cam_name}: dict with streams: {list(cam_data.keys())}")
+                                for stream_type, stream_data in cam_data.items():
+                                    if isinstance(stream_data, np.ndarray):
+                                        img_shape = stream_data.shape
+                                        print(f"        {stream_type}: {img_shape} (H×W×C: {img_shape[0]}×{img_shape[1]}×{img_shape[2] if len(img_shape) > 2 else 'N/A'})")
+                                    elif isinstance(stream_data, bytes):
+                                        print(f"        {stream_type}: bytes(length={len(stream_data)}, compressed_jpg)")
+                                    elif stream_data is None:
+                                        print(f"        {stream_type}: None")
+                                    else:
+                                        print(f"        {stream_type}: {type(stream_data).__name__}")
+                            else:
+                                # Handle dict that might contain other metadata
+                                print(f"      {cam_name}: {self.get_data_type_info(cam_data)}")
+                        elif cam_data is None:
+                            print(f"      {cam_name}: None")
+                        else:
+                            print(f"      {cam_name}: {type(cam_data).__name__} - {self.get_data_type_info(cam_data)}")
                 elif isinstance(value, dict):
                     print(f"   {key}: dict({list(value.keys())})")
                     for sub_key, sub_value in value.items():
                         if isinstance(sub_value, np.ndarray):
-                            print(f"      {sub_key}: {self.get_data_type_info(sub_value)}")
+                            dimensions = f" dimensions: {sub_value.shape}"
+                            print(f"      {sub_key}: {self.get_data_type_info(sub_value)}{dimensions}")
                         elif sub_value is None:
                             print(f"      {sub_key}: None")
+                        elif isinstance(sub_value, list) and sub_value and isinstance(sub_value[0], (int, float)):
+                            print(f"      {sub_key}: list(length={len(sub_value)}, values={sub_value})")
+                        elif isinstance(sub_value, tuple):
+                            if sub_value and isinstance(sub_value[0], (int, float)):
+                                print(f"      {sub_key}: tuple(length={len(sub_value)}, values={sub_value})")
+                            else:
+                                print(f"      {sub_key}: {self.get_data_type_info(sub_value)}")
                         else:
                             print(f"      {sub_key}: {type(sub_value).__name__}")
                 elif isinstance(value, np.ndarray):
-                    print(f"   {key}: {self.get_data_type_info(value)}")
+                    dimensions = f" dimensions: {value.shape}"
+                    print(f"   {key}: {self.get_data_type_info(value)}{dimensions}")
+                elif isinstance(value, list):
+                    if value and isinstance(value[0], (int, float)):
+                        print(f"   {key}: list(length={len(value)}, values={value})")
+                    else:
+                        print(f"   {key}: {self.get_data_type_info(value)}")
+                elif isinstance(value, tuple):
+                    if value and isinstance(value[0], (int, float)):
+                        print(f"   {key}: tuple(length={len(value)}, values={value})")
+                    else:
+                        print(f"   {key}: {self.get_data_type_info(value)}")
                 else:
                     print(f"   {key}: {type(value).__name__}")
     
@@ -341,6 +474,24 @@ class TeleopDataAnalyzer:
         self.analyze_timestamps()
         self.show_sample_data()
         self.generate_summary_report()
+        
+        # Display camera images from sample entries
+        if 'image' in self.data[0]:
+            print("\n" + "="*80)
+            user_input = input("Display camera images from sample entries (first, middle, last)? (y/n): ").strip().lower()
+            if user_input in ['y', 'yes']:
+                # Use same logic as show_sample_data for entry selection
+                if len(self.data) == 1:
+                    sample_indices = [0]
+                elif len(self.data) == 2:
+                    sample_indices = [0, 1]
+                else:
+                    middle_idx = len(self.data) // 2
+                    sample_indices = [0, middle_idx, len(self.data) - 1]
+                
+                for idx in sample_indices:
+                    print(f"\n--- Displaying images from Entry {idx} (of {len(self.data) - 1}) ---")
+                    self.display_camera_images(idx)
         
         return True
 

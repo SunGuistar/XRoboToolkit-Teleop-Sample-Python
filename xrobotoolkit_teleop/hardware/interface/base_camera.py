@@ -49,6 +49,17 @@ class BaseCameraInterface(ABC):
         """
         pass
 
+    @abstractmethod
+    def get_compressed_frames(self):
+        """
+        Fetches and returns compressed frames from all cameras.
+
+        Returns:
+            dict: A dictionary where keys are camera identifiers (e.g., serial numbers)
+                  and values are another dictionary containing 'color' and 'depth' compressed image data.
+        """
+        pass
+
     def __enter__(self):
         self.start()
         return self
