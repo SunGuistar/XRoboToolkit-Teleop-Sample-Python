@@ -94,7 +94,8 @@ elif [[ "$1" == "--install" ]]; then
     if [[ "$OS_NAME" == "Linux" ]]; then
         conda install -c conda-forge libstdcxx-ng -y
     fi
-    pip install --upgrade pip
+    pip install uv
+    uv pip install --upgrade pip
 
     # Install the required packages
     rm -rf dependencies
@@ -110,11 +111,11 @@ elif [[ "$1" == "--install" ]]; then
     cd R5
     git checkout dev/python_pkg
     cd py/ARX_R5_python/
-    pip install .
+    uv pip install .
 
     cd ../../../..
 
-    pip install -e . || { echo "Failed to install xrobotoolkit_teleop with pip"; exit 1; }
+    uv pip install -e . || { echo "Failed to install xrobotoolkit_teleop with pip"; exit 1; }
 
     echo -e "\n"
     echo -e "[INFO] xrobotoolkit_teleop is installed in conda environment '$ENV_NAME'.\n"
