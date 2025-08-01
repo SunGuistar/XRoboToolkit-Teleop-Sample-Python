@@ -322,6 +322,27 @@ class BaseTeleopController(abc.ABC):
                 tracker_frame[:3, 3] = self.motion_tracker_task[name].target_world
                 frame_viz(f"vis_tracker_{name}", tracker_frame)
 
+    def sync_end_effector_poses_to_placo_tasks(self):
+        """
+        Syncs the current end effector link poses to their corresponding placo tasks.
+        This is useful for initializing or resetting task targets to current robot state.
+        """
+        for name, config in self.manipulator_config.items():
+            # Get current link pose
+            ee_xyz, ee_quat = self._get_link_pose(config["link_name"])
+            
+            # Update the corresponding placo task
+            if self.effector_control_mode[name] == "position":
+                # Position-only control: update target position
+                self.effector_task[name].target_world = ee_xyz
+            else:
+                # Full pose control: update target pose
+                ee_target = tf.quaternion_matrix(ee_quat)
+                ee_target[:3, 3] = ee_xyz
+                self.effector_task[name].T_world_frame = ee_target
+            
+            print(f"Synced {name} end effector pose to placo task: {config['link_name']}")
+
     def _update_gripper_target(self):
         for gripper_name in self.manipulator_config.keys():
             if "gripper_config" not in self.manipulator_config[gripper_name]:
