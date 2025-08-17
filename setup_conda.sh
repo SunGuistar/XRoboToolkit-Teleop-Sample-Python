@@ -11,8 +11,8 @@ if [[ "$OS_NAME" == "Linux" ]]; then
         . /etc/os-release
         OS_VERSION=$VERSION_ID
     fi
-    if [[ "$OS_VERSION" != "22.04" ]]; then
-        echo "Warning: This script has only been tested on Ubuntu 22.04"
+    if [[ "$OS_VERSION" != "22.04" && "$OS_VERSION" != "24.04" ]]; then
+        echo "Warning: This script has only been tested on Ubuntu 22.04 and 24.04"
         echo "Your system is running Ubuntu $OS_VERSION."
         read -p "Do you want to continue anyway? (y/N): " -n 1 -r
         echo
