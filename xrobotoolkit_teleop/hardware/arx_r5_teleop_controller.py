@@ -102,6 +102,7 @@ class ARXR5TeleopController(HardwareTeleopController):
     ):
         self.can_ports = can_ports
         self.camera_serial_dict = camera_serial_dict
+        self.camera_serial_to_name = {serial: name for name, serial in camera_serial_dict.items()}
         self.camera_width = camera_width
         self.camera_height = camera_height
         self.camera_fps = camera_fps
@@ -194,13 +195,43 @@ class ARXR5TeleopController(HardwareTeleopController):
             "qpos": {arm: c.get_joint_positions() for arm, c in self.arm_controllers.items()},
             "qvel": {arm: c.get_joint_velocities() for arm, c in self.arm_controllers.items()},
             "qpos_des": {
-                arm: self.placo_robot.state.q[self.placo_arm_joint_slice[arm]].copy() for arm in self.arm_controllers
+                arm: self.placo_robot.state.q[self.placo_arm_joint_slice[arm]].copy()
+                for arm in self.arm_controllers
             },
             "gripper_target": {
-                arm: (self.gripper_pos_target[arm].copy() if "gripper_config" in self.manipulator_config[arm] else None)
+                arm: (
+                    self.gripper_pos_target[arm].copy()
+                    if "gripper_config" in self.manipulator_config[arm]
+                    else None
+                )
                 for arm in self.arm_controllers
             },
         }
+
+    def _get_camera_frame_for_logging(self) -> Dict:
+        """Returns a dictionary of camera frames for logging with camera names as keys."""
+        if not self.camera_interface:
+            return {}
+
+        # Use compressed frames for logging to reduce file size
+        if self.camera_interface.enable_compression:
+            frames_by_serial = self.camera_interface.get_compressed_frames()
+        else:
+            # Fallback to regular frames for compatibility
+            frames_by_serial = self.camera_interface.get_frames()
+
+        if not frames_by_serial:
+            return {}
+
+        # Convert from serial number keys to camera name keys
+        frames_by_name = {}
+        for serial, frames in frames_by_serial.items():
+            camera_name = self.camera_serial_to_name.get(
+                serial, serial
+            )  # Fallback to serial if name not found
+            frames_by_name[camera_name] = frames
+
+        return frames_by_name
 
     def _shutdown_robot(self):
         """Performs graceful shutdown of the robot hardware."""

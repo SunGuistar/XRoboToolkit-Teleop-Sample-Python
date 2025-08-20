@@ -37,12 +37,11 @@ class RosCameraInterface(BaseCameraInterface):
             enable_compression (bool): Whether to store compressed JPG bytes alongside raw frames.
             jpg_quality (int): JPG compression quality (1-100, higher is better quality).
         """
+        super().__init__(enable_compression=enable_compression, jpg_quality=jpg_quality)
         self.camera_topics = camera_topics
         self.enable_depth = enable_depth
         self.width = width
         self.height = height
-        self.enable_compression = enable_compression
-        self.jpg_quality = jpg_quality
         self.bridge = CvBridge()
 
         # Raw frames for real-time access

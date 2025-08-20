@@ -35,13 +35,12 @@ class RealSenseCameraInterface(BaseCameraInterface):
             enable_compression (bool): Whether to store compressed JPG bytes alongside raw frames.
             jpg_quality (int): JPG compression quality (1-100, higher is better quality).
         """
+        super().__init__(enable_compression=enable_compression, jpg_quality=jpg_quality)
         self.width = width
         self.height = height
         self.fps = fps
         self.serial_numbers = serial_numbers
         self.enable_depth = enable_depth
-        self.enable_compression = enable_compression
-        self.jpg_quality = jpg_quality
         self.pipelines = {}
         self.configs = {}
         self.align = {}

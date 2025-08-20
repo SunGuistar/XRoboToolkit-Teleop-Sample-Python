@@ -90,6 +90,11 @@ class HardwareTeleopController(BaseTeleopController, ABC):
         """Performs graceful shutdown of the robot hardware."""
         pass
 
+    @abstractmethod
+    def _get_camera_frame_for_logging(self) -> Dict:
+        """Returns a dictionary of camera frames for logging with camera names as keys."""
+        pass
+
     def _get_link_pose(self, link_name: str):
         """Gets the current world pose for a given link name from Placo."""
         T_world_link = self.placo_robot.get_T_world_frame(link_name)
@@ -107,12 +112,7 @@ class HardwareTeleopController(BaseTeleopController, ABC):
         data_entry.update(self._get_robot_state_for_logging())
 
         if self.enable_camera and self.camera_interface:
-            # Use compressed frames for logging to reduce file size
-            if hasattr(self.camera_interface, 'get_compressed_frames'):
-                frames = self.camera_interface.get_compressed_frames()
-            else:
-                # Fallback to regular frames for compatibility
-                frames = self.camera_interface.get_frames()
+            frames = self._get_camera_frame_for_logging()
             if frames:
                 data_entry["image"] = frames
 

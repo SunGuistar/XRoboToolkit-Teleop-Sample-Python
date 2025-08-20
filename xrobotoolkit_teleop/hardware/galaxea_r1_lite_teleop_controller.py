@@ -129,7 +129,9 @@ class GalaxeaR1LiteTeleopController(HardwareTeleopController):
         print("Waiting for initial joint states from both R1 Lite arms...")
         all_controllers_ready = False
         while not rospy.is_shutdown() and not all_controllers_ready:
-            all_controllers_ready = all(controller.timestamp > 0 for controller in self.arm_controllers.values())
+            all_controllers_ready = all(
+                controller.timestamp > 0 for controller in self.arm_controllers.values()
+            )
             rospy.sleep(0.1)
         print("Both arm controllers received initial state.")
 
@@ -236,10 +238,29 @@ class GalaxeaR1LiteTeleopController(HardwareTeleopController):
             "qpos": {arm: controller.qpos for arm, controller in self.arm_controllers.items()},
             "qvel": {arm: controller.qvel for arm, controller in self.arm_controllers.items()},
             "qpos_des": {arm: controller.q_des for arm, controller in self.arm_controllers.items()},
-            "gripper_qpos": {arm: controller.qpos_gripper for arm, controller in self.arm_controllers.items()},
-            "gripper_qpos_des": {arm: controller.q_des_gripper for arm, controller in self.arm_controllers.items()},
+            "gripper_qpos": {
+                arm: controller.qpos_gripper for arm, controller in self.arm_controllers.items()
+            },
+            "gripper_qpos_des": {
+                arm: controller.q_des_gripper for arm, controller in self.arm_controllers.items()
+            },
             "chassis_velocity_cmd": self.chassis_controller.get_velocity_command(),
         }
+
+    def _get_camera_frame_for_logging(self) -> Dict:
+        """Returns a dictionary of camera frames for logging with camera names as keys."""
+        if not self.camera_interface:
+            return {}
+
+        # Use compressed frames for logging to reduce file size
+        if self.camera_interface.enable_compression:
+            frames = self.camera_interface.get_compressed_frames()
+        else:
+            # Fallback to regular frames for compatibility
+            frames = self.camera_interface.get_frames()
+
+        # ROS camera interface already uses camera names as keys, so no mapping needed
+        return frames if frames else {}
 
     def _should_keep_running(self) -> bool:
         """Returns True if the main loop should continue running."""

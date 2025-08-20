@@ -6,6 +6,17 @@ class BaseCameraInterface(ABC):
     An abstract base class for camera interfaces.
     """
 
+    def __init__(self, enable_compression: bool = True, jpg_quality: int = 85):
+        """
+        Initialize the base camera interface.
+
+        Args:
+            enable_compression (bool): Whether to store compressed JPG bytes alongside raw frames.
+            jpg_quality (int): JPG compression quality (1-100, higher is better quality).
+        """
+        self.enable_compression = enable_compression
+        self.jpg_quality = jpg_quality
+
     @abstractmethod
     def start(self):
         """Starts the camera stream."""
