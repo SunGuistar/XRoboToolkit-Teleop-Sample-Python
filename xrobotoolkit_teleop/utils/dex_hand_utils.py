@@ -291,6 +291,13 @@ def pico_hand_state_to_mediapipe(hand_state: np.ndarray) -> np.ndarray:
         mediapipe_state[mediapipe_idx] = hand_state[pico_idx, :3]
     return mediapipe_state - mediapipe_state[0:1, :]  # Center at wrist
 
+def calc_hand_position(open_pos, close_pos, percentage):
+    if not (0.0 <= percentage <= 1.0):
+        raise ValueError("Percentage must be between 0.0 and 1.0.")
+    position = open_pos.copy()
+    for i in range(len(open_pos) - 1):
+        position[i] = open_pos[i] + (close_pos[i] - open_pos[i]) * percentage
+    return position
 
 def estimate_frame_from_hand_points(keypoint_3d_array: np.ndarray) -> np.ndarray:
     """
