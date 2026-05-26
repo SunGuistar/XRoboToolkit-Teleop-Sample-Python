@@ -131,6 +131,9 @@ class SingleArmURController:
         self.placo_robot.state.q[PLACO_ARM_Q_SLICE] = q_init
         self.placo_robot.update_kinematics()
         self.target_q = q_init.copy()
+        self._control_lock = threading.Lock()
+        self.control_active = False
+        self._servo_engaged = False
         for name, config in self.manipulator_config.items():
             self.effector_task[name].T_world_frame = self.placo_robot.get_T_world_frame(config["link_name"])
 
@@ -186,9 +189,11 @@ class SingleArmURController:
         self.placo_robot.state.q[PLACO_ARM_Q_SLICE] = current_q
         self.placo_robot.update_kinematics()
 
+        control_active = False
         for name, config in self.manipulator_config.items():
             xr_grip_val = self.xr_client.get_key_value_by_name(config["control_trigger"])
             active = xr_grip_val > (1.0 - CONTROLLER_DEADZONE)
+            control_active = control_active or active
             if self.use_gripper:
                 trigger_val = self.xr_client.get_key_value_by_name(config["gripper_trigger"])
                 self.gripper_pos = int(
@@ -233,9 +238,18 @@ class SingleArmURController:
                 T_world_ee_current = self.placo_robot.get_T_world_frame(config["link_name"])
                 self.effector_task[name].T_world_frame = T_world_ee_current
 
+        with self._control_lock:
+            self.control_active = control_active
+
+        if not control_active:
+            with self._control_lock:
+                self.target_q = current_q.copy()
+            return
+
         try:
             self.solver.solve(True)
-            self.target_q = self.placo_robot.state.q[PLACO_ARM_Q_SLICE].copy()
+            with self._control_lock:
+                self.target_q = self.placo_robot.state.q[PLACO_ARM_Q_SLICE].copy()
 
             if self.visualize_placo and hasattr(self, "placo_vis"):
                 self.placo_vis.display(self.placo_robot.state.q)
@@ -256,6 +270,9 @@ class SingleArmURController:
 
     def close(self):
         if self.robot_controller is not None:
+            if self._servo_engaged:
+                self.robot_controller.servo_stop()
+                self._servo_engaged = False
             self.robot_controller.close()
             self.robot_controller = None
 
@@ -263,19 +280,30 @@ class SingleArmURController:
         print("Starting arm control thread...")
         servo_fail_reported = False
         while not stop_event.is_set():
-            ok = self.robot_controller.servo_joints(self.target_q)
-            if not ok and not servo_fail_reported:
-                print(
-                    "WARNING: servoJ rejected. Check Remote mode on the teach pendant "
-                    "and that no other program holds RTDE control."
-                )
-                servo_fail_reported = True
-            if self.use_gripper:
-                self.robot_controller.gripper.move(
-                    self.gripper_pos,
-                    self.robot_controller.gripper_speed,
-                    self.robot_controller.gripper_force,
-                )
+            with self._control_lock:
+                active = self.control_active
+                q_cmd = self.target_q.copy()
+
+            if active:
+                ok = self.robot_controller.servo_joints(q_cmd)
+                self._servo_engaged = True
+                if not ok and not servo_fail_reported:
+                    print(
+                        "WARNING: servoJ rejected. Check Remote mode on the teach pendant "
+                        "and that no other program holds RTDE control."
+                    )
+                    servo_fail_reported = True
+                if self.use_gripper:
+                    self.robot_controller.gripper.move(
+                        self.gripper_pos,
+                        self.robot_controller.gripper_speed,
+                        self.robot_controller.gripper_force,
+                    )
+            else:
+                if self._servo_engaged:
+                    self.robot_controller.servo_stop()
+                    self._servo_engaged = False
+                time.sleep(0.01)
     def run_ik_thread(self, stop_event):
         print("Starting IK calculation thread...")
         while not stop_event.is_set():

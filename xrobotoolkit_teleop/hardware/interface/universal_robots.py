@@ -113,6 +113,13 @@ class URController:
         self.rtde_c.waitPeriod(t_start)
         return ok
 
+    def servo_stop(self) -> None:
+        if self.rtde_c is not None:
+            try:
+                self.rtde_c.servoStop()
+            except Exception:
+                pass
+
     def open_gripper(self):
         if not self.use_gripper:
             return
