@@ -22,8 +22,10 @@ GRIPPER_SPEED = 255
 CONTROLLER_DEADZONE = 0.1
 
 LEFT_INITIAL_JOINT_DEG = np.array([165.26, -47.50, 118.93, -38.96, 87.51, 149.56])
-# Home pose read from robot @ 192.168.56.10 (recorded from current arm pose)
-RIGHT_INITIAL_JOINT_DEG = np.array([-173.59, -103.74, -51.54, -61.85, 74.35, -11.79])
+# Home pose for single UR5e @ 192.168.56.10 (J1..J6 = shoulder_pan .. wrist_3).
+# Tuned so forearm ~horizontal (J2 shoulder_lift +15 deg) and elbow -45 deg on J3
+# (teach-pendant CCW on elbow; UR joint delta -51.54 -> -96.54) for wrist vs table.
+RIGHT_INITIAL_JOINT_DEG = np.array([-173.59, -110, -70, -90, 74.35, -11.79])
 
 
 class URController:
