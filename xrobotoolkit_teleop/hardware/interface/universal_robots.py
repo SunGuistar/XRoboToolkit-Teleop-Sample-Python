@@ -22,8 +22,8 @@ GRIPPER_SPEED = 255
 CONTROLLER_DEADZONE = 0.1
 
 LEFT_INITIAL_JOINT_DEG = np.array([165.26, -47.50, 118.93, -38.96, 87.51, 149.56])
-# Home pose read from robot @ 192.168.56.10 (UR standard home: J1/J3 ~ -90°)
-RIGHT_INITIAL_JOINT_DEG = np.array([0.00, -90.00, 0.00, -90.00, 0.00, 0.00])
+# Home pose read from robot @ 192.168.56.10 (recorded from current arm pose)
+RIGHT_INITIAL_JOINT_DEG = np.array([-173.59, -103.74, -51.54, -61.85, 74.35, -11.79])
 
 
 class URController:
