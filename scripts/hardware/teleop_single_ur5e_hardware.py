@@ -29,7 +29,7 @@ from xrobotoolkit_teleop.hardware.single_arm_ur_controller import (
 
 def main(
     reset: bool = False,
-    visualize_placo: bool = False,
+    visual: bool = False,
     robot_ip: str = DEFAULT_ROBOT_IP,
     controller_side: Literal["left", "right"] = "right",
     initial_joint_deg: tuple[float, float, float, float, float, float] | None = None,
@@ -40,7 +40,7 @@ def main(
 
     Args:
         reset: Move the arm to the configured home joints, then exit.
-        visualize_placo: Open a Meshcat browser window for IK debugging.
+        visual: Open a Meshcat browser window for IK debugging.
         robot_ip: IP address of the UR controller (set in universal_robots.py or override here).
         controller_side: Which PICO hand controller drives the arm ("left" or "right").
         initial_joint_deg: Optional home joint angles in degrees (6 values). Defaults depend on
@@ -70,7 +70,7 @@ def main(
             manipulator_config=manipulator_config,
             robot_ip=robot_ip,
             initial_joint_deg=initial_joint,
-            visualize_placo=visualize_placo,
+            visualize_placo=visual,
             use_gripper=use_gripper,
         )
     except RuntimeError:
