@@ -21,6 +21,7 @@ from xrobotoolkit_teleop.hardware.interface.universal_robots import (
     LEFT_ROBOT_IP,
     RIGHT_INITIAL_JOINT_DEG,
     RIGHT_ROBOT_IP,
+    URController,
 )
 from xrobotoolkit_teleop.hardware.single_arm_ur_controller import (
     LEFT_CONTROLLER_MANIPULATOR_CONFIG,
@@ -69,6 +70,23 @@ def main(
         else default_initial_joint_deg
     )
 
+    if reset:
+        print(f"Reset: moving UR to home @ {robot_ip} (no VR / no DH gripper)...")
+        ur = URController(
+            robot_ip=robot_ip,
+            initial_joint_positions=np.deg2rad(initial_joint),
+            use_gripper=False,
+        )
+        try:
+            ur.reset()
+            print("Arm reset completed.")
+        except Exception as e:
+            print(f"Error during reset: {e}")
+            ur.close()
+            raise SystemExit(1) from e
+        ur.close()
+        return
+
     xr_client = XrClient()
     arm_controller = None
     try:
@@ -85,21 +103,12 @@ def main(
             dh_gripper_slave_id=DH_GRIPPER_SLAVE_ID,
             dh_gripper_baudrate=DH_GRIPPER_BAUDRATE,
         )
+        arm_controller.init_dh_gripper()
     except RuntimeError:
         xr_client.close()
         raise
 
-    if reset:
-        print("Reset flag detected. Running arm reset procedure...")
-        try:
-            arm_controller.robot_controller.reset()
-            print("Arm reset procedure completed.")
-        except Exception as e:
-            print(f"Error during reset: {e}")
-            arm_controller.close()
-            xr_client.close()
-            raise SystemExit(1) from e
-    else:
+    try:
         print(
             f"Single-arm teleop: robot_ip={robot_ip}, controller_side={controller_side}. "
             f"Hold the VR grip button to move the arm. "
@@ -136,11 +145,11 @@ def main(
 
         for t in threads:
             t.join()
-
-    if arm_controller is not None:
-        arm_controller.close()
-    xr_client.close()
-    print("Controller stopped and disconnected.")
+    finally:
+        if arm_controller is not None:
+            arm_controller.close()
+        xr_client.close()
+        print("Controller stopped and disconnected.")
 
 
 if __name__ == "__main__":

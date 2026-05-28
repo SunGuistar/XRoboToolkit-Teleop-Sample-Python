@@ -1,3 +1,5 @@
+import time
+
 import numpy as np
 import rtde_control
 import rtde_receive
@@ -26,6 +28,58 @@ LEFT_INITIAL_JOINT_DEG = np.array([165.26, -47.50, 118.93, -38.96, 87.51, 149.56
 # Tuned so forearm ~horizontal (J2 shoulder_lift +15 deg) and elbow -45 deg on J3
 # (teach-pendant CCW on elbow; UR joint delta -51.54 -> -96.54) for wrist vs table.
 RIGHT_INITIAL_JOINT_DEG = np.array([-173.59, -110, -70, -90, 74.35, -11.79])
+
+RTDE_CONNECT_RETRIES = 3
+RTDE_RETRY_DELAY_S = 1.5
+
+
+def _disconnect_rtde_control(rtde_c) -> None:
+    if rtde_c is None:
+        return
+    try:
+        rtde_c.servoStop()
+    except Exception:
+        pass
+    try:
+        rtde_c.stopScript()
+    except Exception:
+        pass
+    try:
+        rtde_c.disconnect()
+    except Exception:
+        pass
+
+
+def connect_rtde(robot_ip: str, retries: int = RTDE_CONNECT_RETRIES) -> tuple:
+    """Open RTDE receive + control with retries (clears stale external-control sessions)."""
+    last_error: Exception | None = None
+    rtde_r = None
+    rtde_c = None
+
+    for attempt in range(1, retries + 1):
+        _disconnect_rtde_control(rtde_c)
+        rtde_c = None
+        try:
+            if rtde_r is None:
+                rtde_r = rtde_receive.RTDEReceiveInterface(robot_ip)
+            time.sleep(0.3)
+            rtde_c = rtde_control.RTDEControlInterface(robot_ip)
+            return rtde_c, rtde_r
+        except RuntimeError as exc:
+            last_error = exc
+            print(f"RTDE control connect attempt {attempt}/{retries} failed: {exc}")
+            time.sleep(RTDE_RETRY_DELAY_S)
+
+    raise RuntimeError(
+        f"Failed to connect RTDE control to UR at {robot_ip} after {retries} attempts: {last_error}\n"
+        "Checklist:\n"
+        f"  1. Ping the robot: ping {robot_ip}\n"
+        "  2. Teach pendant: Remote control ON, program stopped, no protective stop\n"
+        "  3. No other PC/script holding RTDE (re-run after closing old teleop)\n"
+        "  4. On pendant: stop any running program, then retry\n"
+        "  5. PC on same subnet (e.g. 192.168.56.x)\n"
+        "  6. Quick test: python scripts/hardware/test_ur_connection.py --demo-motion=False"
+    ) from last_error
 
 
 class URController:
@@ -57,20 +111,8 @@ class URController:
         self.rtde_r = None
         self.gripper = None
 
-        try:
-            self.rtde_c = rtde_control.RTDEControlInterface(robot_ip)
-            self.rtde_r = rtde_receive.RTDEReceiveInterface(robot_ip)
-            print(f"Connected to UR robot at {robot_ip}")
-        except RuntimeError as e:
-            raise RuntimeError(
-                f"Failed to connect RTDE to UR at {robot_ip}: {e}\n"
-                "Checklist:\n"
-                "  1. Ping the robot: ping " + robot_ip + "\n"
-                "  2. On the teach pendant: enable Remote control (not Local)\n"
-                "  3. No other PC/program is using RTDE on this robot\n"
-                "  4. Robot is powered on, out of protective stop, and ready\n"
-                "  5. PC network is 192.168.56.x on the same subnet as the arm"
-            ) from e
+        self.rtde_c, self.rtde_r = connect_rtde(robot_ip)
+        print(f"Connected to UR robot at {robot_ip}")
 
         if self.use_gripper:
             self.gripper = RobotiqGripper()

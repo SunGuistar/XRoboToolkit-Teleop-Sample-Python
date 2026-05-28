@@ -117,8 +117,9 @@ class SingleArmURController:
             use_gripper=use_gripper and not use_dh_gripper,
         )
 
+        self._dh_gripper_kwargs = None
         if use_dh_gripper:
-            self.dh_gripper = DHPGCGripperTeleopInterface(
+            self._dh_gripper_kwargs = dict(
                 port=dh_gripper_port,
                 baudrate=dh_gripper_baudrate,
                 slave_id=dh_gripper_slave_id,
@@ -290,6 +291,14 @@ class SingleArmURController:
             print(f"IK solver failed: {e}. Returning last known good joint positions.")
         except Exception as e:
             print(f"An unexpected error occurred in IK: {e}. Returning last known good joint positions.")
+
+    def init_dh_gripper(self) -> None:
+        """Connect and initialize DH gripper (call after UR RTDE is up)."""
+        if not self.use_dh_gripper or self._dh_gripper_kwargs is None:
+            return
+        if self.dh_gripper is not None:
+            return
+        self.dh_gripper = DHPGCGripperTeleopInterface(**self._dh_gripper_kwargs)
 
     def reset(self):
         self.robot_controller.reset()
