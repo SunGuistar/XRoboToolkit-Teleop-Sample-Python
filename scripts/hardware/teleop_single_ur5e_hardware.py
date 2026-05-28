@@ -103,16 +103,20 @@ def main(
             dh_gripper_slave_id=DH_GRIPPER_SLAVE_ID,
             dh_gripper_baudrate=DH_GRIPPER_BAUDRATE,
         )
-        arm_controller.init_dh_gripper()
+        dh_gripper_connected = arm_controller.init_dh_gripper()
     except RuntimeError:
         xr_client.close()
         raise
 
     try:
+        gripper_hint = (
+            f"Trigger ({controller_side}) controls DH gripper on {DH_GRIPPER_PORT} (proportional)."
+            if dh_gripper_connected
+            else "DH gripper not connected — arm-only teleop."
+        )
         print(
             f"Single-arm teleop: robot_ip={robot_ip}, controller_side={controller_side}. "
-            f"Hold the VR grip button to move the arm. "
-            f"Trigger ({controller_side}) controls DH gripper on {DH_GRIPPER_PORT} (proportional)."
+            f"Hold the VR grip button to move the arm. {gripper_hint}"
         )
         arm_controller.calc_target_joint_position()
 

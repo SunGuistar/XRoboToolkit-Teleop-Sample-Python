@@ -292,13 +292,27 @@ class SingleArmURController:
         except Exception as e:
             print(f"An unexpected error occurred in IK: {e}. Returning last known good joint positions.")
 
-    def init_dh_gripper(self) -> None:
-        """Connect and initialize DH gripper (call after UR RTDE is up)."""
+    def init_dh_gripper(self) -> bool:
+        """Connect and initialize DH gripper (call after UR RTDE is up).
+
+        Returns True if the gripper is ready, False if skipped or unavailable (arm-only).
+        """
         if not self.use_dh_gripper or self._dh_gripper_kwargs is None:
-            return
+            return False
         if self.dh_gripper is not None:
-            return
-        self.dh_gripper = DHPGCGripperTeleopInterface(**self._dh_gripper_kwargs)
+            return True
+        port = self._dh_gripper_kwargs.get("port", "?")
+        try:
+            self.dh_gripper = DHPGCGripperTeleopInterface(**self._dh_gripper_kwargs)
+            return True
+        except Exception as e:
+            print(
+                f"WARNING: DH gripper on {port} unavailable ({e}). "
+                "Continuing in arm-only mode."
+            )
+            self.use_dh_gripper = False
+            self._dh_gripper_kwargs = None
+            return False
 
     def reset(self):
         self.robot_controller.reset()
