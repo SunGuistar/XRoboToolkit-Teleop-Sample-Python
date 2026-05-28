@@ -3,6 +3,8 @@ Single UR5e hardware teleoperation using a PICO VR controller.
 
 Does not require a second UR arm or Dynamixel head motors (those are optional lab hardware
 in teleop_dual_ur5e_hardware.py, not part of the PICO headset).
+
+DH PGC-300-60 gripper: RS485 on /dev/ttyUSB0, VR trigger proportional open/close (no extra CLI flags).
 """
 
 import threading
@@ -26,6 +28,13 @@ from xrobotoolkit_teleop.hardware.single_arm_ur_controller import (
     SingleArmURController,
 )
 
+# DH PGC-300-60 defaults (this lab unit: register 1000=open, 0=closed)
+DH_GRIPPER_PORT = "/dev/ttyUSB0"
+DH_GRIPPER_FORCE = 50
+DH_GRIPPER_SPEED = 50
+DH_GRIPPER_SLAVE_ID = 1
+DH_GRIPPER_BAUDRATE = 115200
+
 
 def main(
     reset: bool = False,
@@ -33,7 +42,6 @@ def main(
     robot_ip: str = DEFAULT_ROBOT_IP,
     controller_side: Literal["left", "right"] = "right",
     initial_joint_deg: tuple[float, float, float, float, float, float] | None = None,
-    use_gripper: bool = False,
 ):
     """
     Run single-arm UR5e teleoperation with a PICO VR controller.
@@ -45,7 +53,6 @@ def main(
         controller_side: Which PICO hand controller drives the arm ("left" or "right").
         initial_joint_deg: Optional home joint angles in degrees (6 values). Defaults depend on
             controller_side when not set.
-        use_gripper: Connect to a Robotiq gripper on port 63352 (default: arm only, no gripper).
     """
     if controller_side == "left":
         manipulator_config = LEFT_CONTROLLER_MANIPULATOR_CONFIG
@@ -71,7 +78,12 @@ def main(
             robot_ip=robot_ip,
             initial_joint_deg=initial_joint,
             visualize_placo=visual,
-            use_gripper=use_gripper,
+            use_dh_gripper=True,
+            dh_gripper_port=DH_GRIPPER_PORT,
+            dh_gripper_force=DH_GRIPPER_FORCE,
+            dh_gripper_speed=DH_GRIPPER_SPEED,
+            dh_gripper_slave_id=DH_GRIPPER_SLAVE_ID,
+            dh_gripper_baudrate=DH_GRIPPER_BAUDRATE,
         )
     except RuntimeError:
         xr_client.close()
@@ -88,10 +100,10 @@ def main(
             xr_client.close()
             raise SystemExit(1) from e
     else:
-        gripper_hint = " Pull the trigger for the gripper." if use_gripper else ""
         print(
             f"Single-arm teleop: robot_ip={robot_ip}, controller_side={controller_side}. "
-            f"Hold the VR grip button to move the arm.{gripper_hint}"
+            f"Hold the VR grip button to move the arm. "
+            f"Trigger ({controller_side}) controls DH gripper on {DH_GRIPPER_PORT} (proportional)."
         )
         arm_controller.calc_target_joint_position()
 
@@ -104,9 +116,16 @@ def main(
             target=arm_controller.run_ik_thread,
             args=(stop_signal,),
         )
+        threads = [arm_thread, ik_thread]
+        if arm_controller.use_dh_gripper:
+            gripper_thread = threading.Thread(
+                target=arm_controller.run_dh_gripper_thread,
+                args=(stop_signal,),
+            )
+            threads.append(gripper_thread)
 
-        arm_thread.start()
-        ik_thread.start()
+        for t in threads:
+            t.start()
 
         while not stop_signal.is_set():
             try:
@@ -115,8 +134,8 @@ def main(
                 print("KeyboardInterrupt detected. Exiting...")
                 stop_signal.set()
 
-        arm_thread.join()
-        ik_thread.join()
+        for t in threads:
+            t.join()
 
     if arm_controller is not None:
         arm_controller.close()

@@ -13,6 +13,7 @@ from placo_utils.visualization import (
 )
 
 from xrobotoolkit_teleop.common.xr_client import XrClient
+from xrobotoolkit_teleop.hardware.interface.dh_pgc_gripper import DHPGCGripperTeleopInterface
 from xrobotoolkit_teleop.hardware.interface.universal_robots import (
     CONTROLLER_DEADZONE,
     DEFAULT_ROBOT_IP,
@@ -80,6 +81,13 @@ class SingleArmURController:
         scale_factor: float = DEFAULT_SCALE_FACTOR,
         visualize_placo: bool = False,
         use_gripper: bool = False,
+        use_dh_gripper: bool = False,
+        dh_gripper_port: str = "/dev/ttyUSB0",
+        dh_gripper_force: int = 50,
+        dh_gripper_speed: int = 50,
+        dh_gripper_slave_id: int = 1,
+        dh_gripper_baudrate: int = 115200,
+        dh_gripper_standard_position: bool = False,
     ):
         self.xr_client = xr_client
         self.robot_urdf_path = robot_urdf_path
@@ -89,7 +97,12 @@ class SingleArmURController:
         self.manipulator_config = manipulator_config
         self.arm_name = next(iter(manipulator_config.keys()))
         self.use_gripper = use_gripper
+        self.use_dh_gripper = use_dh_gripper
+        self.dh_gripper = None
         self.robot_controller = None
+
+        if use_gripper and use_dh_gripper:
+            raise ValueError("use_gripper (Robotiq) and use_dh_gripper (PGC-300-60) are mutually exclusive.")
 
         self.robot_controller = URController(
             robot_ip=robot_ip,
@@ -101,8 +114,18 @@ class SingleArmURController:
             servo_gain=servo_gain,
             gripper_force=gripper_force,
             gripper_speed=gripper_speed,
-            use_gripper=use_gripper,
+            use_gripper=use_gripper and not use_dh_gripper,
         )
+
+        if use_dh_gripper:
+            self.dh_gripper = DHPGCGripperTeleopInterface(
+                port=dh_gripper_port,
+                baudrate=dh_gripper_baudrate,
+                slave_id=dh_gripper_slave_id,
+                force=dh_gripper_force,
+                speed=dh_gripper_speed,
+                standard_position_mapping=dh_gripper_standard_position,
+            )
 
         self.placo_robot = placo.RobotWrapper(self.robot_urdf_path)
         self.solver = placo.KinematicsSolver(self.placo_robot)
@@ -134,6 +157,7 @@ class SingleArmURController:
         self._control_lock = threading.Lock()
         self.control_active = False
         self._servo_engaged = False
+        self._pending_gripper_trigger: float = 0.0
         for name, config in self.manipulator_config.items():
             self.effector_task[name].T_world_frame = self.placo_robot.get_T_world_frame(config["link_name"])
 
@@ -203,6 +227,8 @@ class SingleArmURController:
                         trigger_val,
                     )
                 )
+            elif self.use_dh_gripper:
+                self._pending_gripper_trigger = self.xr_client.get_key_value_by_name(config["gripper_trigger"])
 
             if active:
                 if self.init_ee_xyz[name] is None:
@@ -269,6 +295,9 @@ class SingleArmURController:
         self.robot_controller.reset()
 
     def close(self):
+        if self.dh_gripper is not None:
+            self.dh_gripper.disconnect()
+            self.dh_gripper = None
         if self.robot_controller is not None:
             if self._servo_engaged:
                 self.robot_controller.servo_stop()
@@ -281,29 +310,31 @@ class SingleArmURController:
         servo_fail_reported = False
         while not stop_event.is_set():
             with self._control_lock:
-                active = self.control_active
                 q_cmd = self.target_q.copy()
 
-            if active:
-                ok = self.robot_controller.servo_joints(q_cmd)
-                self._servo_engaged = True
-                if not ok and not servo_fail_reported:
-                    print(
-                        "WARNING: servoJ rejected. Check Remote mode on the teach pendant "
-                        "and that no other program holds RTDE control."
-                    )
-                    servo_fail_reported = True
-                if self.use_gripper:
-                    self.robot_controller.gripper.move(
-                        self.gripper_pos,
-                        self.robot_controller.gripper_speed,
-                        self.robot_controller.gripper_force,
-                    )
-            else:
-                if self._servo_engaged:
-                    self.robot_controller.servo_stop()
-                    self._servo_engaged = False
-                time.sleep(0.01)
+            ok = self.robot_controller.servo_joints(q_cmd)
+            self._servo_engaged = True
+            if not ok and not servo_fail_reported:
+                print(
+                    "WARNING: servoJ rejected. Check Remote mode on the teach pendant "
+                    "and that no other program holds RTDE control."
+                )
+                servo_fail_reported = True
+            if self.use_gripper:
+                self.robot_controller.gripper.move(
+                    self.gripper_pos,
+                    self.robot_controller.gripper_speed,
+                    self.robot_controller.gripper_force,
+                )
+
+    def run_dh_gripper_thread(self, stop_event):
+        """Modbus gripper I/O off the IK/RTDE path to avoid arm stutter."""
+        print("Starting DH gripper control thread...")
+        while not stop_event.is_set():
+            if self.dh_gripper is not None:
+                self.dh_gripper.update_from_trigger(self._pending_gripper_trigger)
+            time.sleep(0.02)
+
     def run_ik_thread(self, stop_event):
         print("Starting IK calculation thread...")
         while not stop_event.is_set():
