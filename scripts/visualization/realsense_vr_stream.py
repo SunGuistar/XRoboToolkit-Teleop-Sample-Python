@@ -26,6 +26,11 @@ Remote Vision (ZEDMINI → Listen) and press **B** on the right controller to to
 
 Default: layout=screen, quality=high. Override with --layout sbs, --quality balanced|low.
 
+Dual-camera picture-in-picture (racing-game style: main view + corner inset):
+  python scripts/visualization/realsense_vr_stream.py \\
+    --main-serial <rear_serial> --pip-serial <side_serial> \\
+    --quality balanced --pip-scale 0.28
+
 Requires: pyrealsense2, opencv-python, av, numpy
 """
 
@@ -35,12 +40,15 @@ import argparse
 import socket
 import struct
 import sys
+import threading
 import time
+from collections.abc import Callable
 
 import av
 import cv2
 import numpy as np
 import pyrealsense2 as rs
+from av.video.frame import PictureType
 from fractions import Fraction
 
 QUALITY_PRESETS = {
@@ -162,6 +170,34 @@ def _letterbox_pane(color_bgr: np.ndarray, pane_w: int, pane_h: int) -> np.ndarr
     return canvas
 
 
+def compose_pip_frame(
+    main_bgr: np.ndarray,
+    pip_bgr: np.ndarray,
+    pip_scale: float = 0.28,
+    margin: int = 16,
+    border: int = 2,
+) -> np.ndarray:
+    """Overlay pip_bgr in the bottom-right corner of main_bgr (racing-game PiP)."""
+    out = main_bgr.copy()
+    frame_h, frame_w = out.shape[:2]
+    pip_w = max(1, int(frame_w * pip_scale))
+    pip_h = max(1, int(pip_w * pip_bgr.shape[0] / pip_bgr.shape[1]))
+    pip_resized = cv2.resize(pip_bgr, (pip_w, pip_h), interpolation=cv2.INTER_AREA)
+
+    x0 = frame_w - pip_w - margin
+    y0 = frame_h - pip_h - margin
+    if border > 0:
+        cv2.rectangle(
+            out,
+            (x0 - border, y0 - border),
+            (x0 + pip_w + border - 1, y0 + pip_h + border - 1),
+            (255, 255, 255),
+            border,
+        )
+    out[y0 : y0 + pip_h, x0 : x0 + pip_w] = pip_resized
+    return out
+
+
 def prepare_frame(color_bgr: np.ndarray, stereo_sbs: bool, layout: str = "sbs") -> np.ndarray:
     if not stereo_sbs:
         return color_bgr
@@ -170,6 +206,96 @@ def prepare_frame(color_bgr: np.ndarray, stereo_sbs: bool, layout: str = "sbs") 
         pane = _letterbox_pane(color_bgr, pane_w, pane_h)
         return np.hstack((pane, pane))
     return np.hstack((color_bgr, color_bgr))
+
+
+class PipelineReader:
+    """Read RealSense color frames on a background thread (avoids blocking the stream loop)."""
+
+    def __init__(self, pipeline: rs.pipeline, name: str):
+        self._pipeline = pipeline
+        self._name = name
+        self._lock = threading.Lock()
+        self._frame: np.ndarray | None = None
+        self._stop = threading.Event()
+        self._errors = 0
+        self._thread = threading.Thread(target=self._loop, name=f"rs-{name}", daemon=True)
+        self._thread.start()
+
+    def _loop(self) -> None:
+        while not self._stop.is_set():
+            try:
+                frames = self._pipeline.wait_for_frames(timeout_ms=1000)
+                color = frames.get_color_frame()
+                if not color:
+                    continue
+                data = np.asanyarray(color.get_data()).copy()
+                with self._lock:
+                    self._frame = data
+            except RuntimeError as exc:
+                self._errors += 1
+                if self._errors == 1 or self._errors % 30 == 0:
+                    print(f"Warning: {self._name} camera: {exc}", file=sys.stderr)
+                time.sleep(0.01)
+
+    def get_latest(self, timeout_s: float = 2.0) -> np.ndarray:
+        deadline = time.perf_counter() + timeout_s
+        while time.perf_counter() < deadline:
+            with self._lock:
+                if self._frame is not None:
+                    return self._frame.copy()
+            time.sleep(0.005)
+        raise RuntimeError(f"No frame from {self._name} camera within {timeout_s:.1f}s")
+
+    def stop(self) -> None:
+        self._stop.set()
+        self._thread.join(timeout=2.0)
+
+
+class PreviewWindow:
+    """Show preview on a background thread so Wayland/GUI issues cannot block VR streaming."""
+
+    def __init__(self, window_name: str = "RealSense (preview)"):
+        self._window_name = window_name
+        self._lock = threading.Lock()
+        self._frame: np.ndarray | None = None
+        self._stop = threading.Event()
+        self._quit = False
+        self._enabled = True
+        self._thread = threading.Thread(target=self._loop, name="preview", daemon=True)
+        self._thread.start()
+
+    def _loop(self) -> None:
+        try:
+            cv2.namedWindow(self._window_name, cv2.WINDOW_NORMAL)
+            while not self._stop.is_set():
+                with self._lock:
+                    frame = None if self._frame is None else self._frame.copy()
+                if frame is not None:
+                    cv2.imshow(self._window_name, frame)
+                if cv2.waitKey(30) & 0xFF == ord("q"):
+                    self._quit = True
+                    break
+        except cv2.error as exc:
+            self._enabled = False
+            print(f"Preview disabled (OpenCV GUI): {exc}", file=sys.stderr)
+            print("Streaming continues. Tip: omit --preview, or try QT_QPA_PLATFORM=xcb", file=sys.stderr)
+        finally:
+            try:
+                cv2.destroyWindow(self._window_name)
+            except cv2.error:
+                pass
+
+    def update(self, frame: np.ndarray) -> None:
+        if self._enabled:
+            with self._lock:
+                self._frame = frame
+
+    def should_quit(self) -> bool:
+        return self._quit
+
+    def close(self) -> None:
+        self._stop.set()
+        self._thread.join(timeout=2.0)
 
 
 def create_h264_encoder(
@@ -244,10 +370,13 @@ def encode_and_send_frame(
     color_bgr: np.ndarray,
     stereo_sbs: bool,
     layout: str = "sbs",
+    force_keyframe: bool = False,
 ) -> int:
     """Encode one BGR frame and send all resulting H.264 packets. Returns packet count."""
     color_bgr = prepare_frame(color_bgr, stereo_sbs, layout)
     video_frame = av.VideoFrame.from_ndarray(color_bgr, format="bgr24").reformat(format="yuv420p")
+    if force_keyframe:
+        video_frame.pict_type = PictureType.I
     count = 0
     for packet in codec.encode(video_frame):
         payload = bytes(packet)
@@ -259,16 +388,21 @@ def encode_and_send_frame(
 
 def stream_loop(
     sock: socket.socket,
-    pipeline: rs.pipeline,
+    get_frame: Callable[[], np.ndarray],
     codec: av.codec.CodecContext,
     fps: int,
     stereo_sbs: bool,
     layout: str,
-    preview: bool,
+    preview: PreviewWindow | None,
 ) -> int:
     frame_interval = 1.0 / fps
     next_frame_time = time.perf_counter()
     packets_sent = 0
+    frames_sent = 0
+    stat_interval_s = 5.0
+    last_stat_time = time.perf_counter()
+    stat_frames = 0
+    stat_packets = 0
 
     try:
         while True:
@@ -277,22 +411,42 @@ def stream_loop(
                 time.sleep(next_frame_time - now)
             next_frame_time += frame_interval
 
-            frames = pipeline.wait_for_frames(timeout_ms=500)
-            color = np.asanyarray(frames.get_color_frame().get_data())
+            color = get_frame()
+            force_keyframe = frames_sent == 0
 
-            if preview:
-                cv2.imshow("RealSense (preview)", prepare_frame(color, stereo_sbs, layout))
-                if cv2.waitKey(1) & 0xFF == ord("q"):
+            if preview is not None:
+                preview.update(prepare_frame(color, stereo_sbs, layout))
+                if preview.should_quit():
                     break
 
-            packets_sent += encode_and_send_frame(sock, codec, color, stereo_sbs, layout)
+            frame_packets = encode_and_send_frame(
+                sock, codec, color, stereo_sbs, layout, force_keyframe=force_keyframe
+            )
+            packets_sent += frame_packets
+            frames_sent += 1
+            stat_frames += 1
+            stat_packets += frame_packets
+
+            if time.perf_counter() - last_stat_time >= stat_interval_s:
+                print(
+                    f"[stream] {stat_frames} frames, {stat_packets} packets "
+                    f"in last {stat_interval_s:.0f}s (total packets: {packets_sent})"
+                )
+                stat_frames = 0
+                stat_packets = 0
+                last_stat_time = time.perf_counter()
 
     except KeyboardInterrupt:
         print("\nStopped by user.")
+    except RuntimeError as exc:
+        print(f"Camera error: {exc}", file=sys.stderr)
+        return 1
     except (BrokenPipeError, ConnectionError, OSError) as exc:
         print(f"Network error (headset disconnected?): {exc}", file=sys.stderr)
         return 1
     finally:
+        if preview is not None:
+            preview.close()
         try:
             for packet in codec.encode(None):
                 payload = bytes(packet)
@@ -301,10 +455,23 @@ def stream_loop(
         except OSError:
             pass
         sock.close()
-        cv2.destroyAllWindows()
-        print(f"H.264 packets sent: {packets_sent}")
+        print(f"Stream finished: {frames_sent} frames, {packets_sent} H.264 packets")
 
     return 0
+
+
+def _print_devices() -> list[tuple[str, str]]:
+    devices = list_devices()
+    if not devices:
+        raise RuntimeError("No RealSense camera found.")
+    for name, sn in devices:
+        print(f"  {name}  (serial: {sn})")
+    return devices
+
+
+def _validate_serial(serial: str, devices: list[tuple[str, str]], label: str) -> None:
+    if serial not in {s for _, s in devices}:
+        raise RuntimeError(f"{label} serial {serial} not found.")
 
 
 def init_camera_pipeline(
@@ -313,25 +480,63 @@ def init_camera_pipeline(
     fps: int,
     serial: str | None,
 ) -> tuple[rs.pipeline, str]:
-    devices = list_devices()
-    if not devices:
-        raise RuntimeError("No RealSense camera found.")
-
-    for name, sn in devices:
-        print(f"  {name}  (serial: {sn})")
-
+    devices = _print_devices()
     use_serial = serial or devices[0][1]
-    if serial and serial not in {s for _, s in devices}:
-        raise RuntimeError(f"Serial {serial} not found.")
+    if serial:
+        _validate_serial(serial, devices, "Camera")
 
     print("Warming up RealSense (before connecting to headset)...")
     pipeline, _ = warmup_camera(use_serial, capture_width, capture_height, fps)
     return pipeline, use_serial
 
 
+def init_pip_camera_pipelines(
+    capture_width: int,
+    capture_height: int,
+    fps: int,
+    main_serial: str,
+    pip_serial: str,
+) -> tuple[rs.pipeline, rs.pipeline, str, str]:
+    devices = _print_devices()
+    _validate_serial(main_serial, devices, "Main")
+    _validate_serial(pip_serial, devices, "PiP")
+    if main_serial == pip_serial:
+        raise RuntimeError("Main and PiP serial numbers must be different.")
+
+    print("Warming up dual RealSense cameras (before connecting to headset)...")
+    main_pipeline, _ = warmup_camera(main_serial, capture_width, capture_height, fps)
+    pip_pipeline, _ = warmup_camera(pip_serial, capture_width, capture_height, fps)
+    return main_pipeline, pip_pipeline, main_serial, pip_serial
+
+
+def make_frame_source(
+    main_pipeline: rs.pipeline,
+    pip_pipeline: rs.pipeline | None = None,
+    pip_scale: float = 0.28,
+    pip_margin: int = 16,
+) -> tuple[Callable[[], np.ndarray], list[PipelineReader]]:
+    main_reader = PipelineReader(main_pipeline, "main")
+    readers: list[PipelineReader] = [main_reader]
+    pip_reader: PipelineReader | None = None
+    if pip_pipeline is not None:
+        pip_reader = PipelineReader(pip_pipeline, "pip")
+        readers.append(pip_reader)
+
+    def get_frame() -> np.ndarray:
+        main_color = main_reader.get_latest()
+        if pip_reader is None:
+            return main_color
+        pip_color = pip_reader.get_latest()
+        return compose_pip_frame(main_color, pip_color, pip_scale, pip_margin)
+
+    return get_frame, readers
+
+
 def stream_to_vr(
     sock: socket.socket,
-    pipeline: rs.pipeline,
+    get_frame: Callable[[], np.ndarray],
+    readers: list[PipelineReader],
+    pipelines: list[rs.pipeline],
     codec: av.codec.CodecContext,
     fps: int,
     stereo_sbs: bool,
@@ -342,20 +547,25 @@ def stream_to_vr(
 
     # Headset closes the socket if no video arrives quickly after TCP connect.
     sent = 0
-    for i in range(5):
-        frames = pipeline.wait_for_frames(timeout_ms=2000)
-        color = np.asanyarray(frames.get_color_frame().get_data())
-        sent += encode_and_send_frame(sock, codec, color, stereo_sbs, layout)
-        if sent > 0:
+    for i in range(10):
+        color = get_frame()
+        sent += encode_and_send_frame(
+            sock, codec, color, stereo_sbs, layout, force_keyframe=(i == 0)
+        )
+        if sent > 0 and i >= 2:
             break
     print(f"Sent {sent} H.264 packet(s) immediately after connect.")
     if sent == 0:
         print("Warning: encoder produced no packets; headset may disconnect.", file=sys.stderr)
 
+    preview_win = PreviewWindow() if preview else None
     try:
-        return stream_loop(sock, pipeline, codec, fps, stereo_sbs, layout, preview)
+        return stream_loop(sock, get_frame, codec, fps, stereo_sbs, layout, preview_win)
     finally:
-        pipeline.stop()
+        for reader in readers:
+            reader.stop()
+        for pipeline in pipelines:
+            pipeline.stop()
 
 
 def main() -> int:
@@ -401,7 +611,31 @@ def main() -> int:
     )
     parser.add_argument("--fps", type=int, default=30, help="Frame rate (default: 30)")
     parser.add_argument("--bitrate", type=int, default=None, help="Override H.264 bitrate (bps)")
-    parser.add_argument("--serial", type=str, default=None, help="RealSense serial")
+    parser.add_argument("--serial", type=str, default=None, help="RealSense serial (single camera)")
+    parser.add_argument(
+        "--main-serial",
+        type=str,
+        default=None,
+        help="Main (full-screen) camera serial for PiP mode, e.g. rear camera",
+    )
+    parser.add_argument(
+        "--pip-serial",
+        type=str,
+        default=None,
+        help="Picture-in-picture camera serial for PiP mode, e.g. side camera",
+    )
+    parser.add_argument(
+        "--pip-scale",
+        type=float,
+        default=0.28,
+        help="PiP width as fraction of main frame (default: 0.28)",
+    )
+    parser.add_argument(
+        "--pip-margin",
+        type=int,
+        default=16,
+        help="PiP inset margin from bottom-right corner in pixels (default: 16)",
+    )
     parser.add_argument("--preview", action="store_true", help="Local OpenCV preview")
     parser.add_argument(
         "--connect-timeout",
@@ -410,6 +644,17 @@ def main() -> int:
         help="Seconds to retry connecting while you enable Listen on PICO (default: 120)",
     )
     args = parser.parse_args()
+
+    pip_mode = bool(args.main_serial or args.pip_serial)
+    if pip_mode and not (args.main_serial and args.pip_serial):
+        print("PiP mode requires both --main-serial and --pip-serial.", file=sys.stderr)
+        return 1
+    if pip_mode and args.serial:
+        print("Use either --serial (single camera) or --main-serial/--pip-serial, not both.", file=sys.stderr)
+        return 1
+    if not 0.1 <= args.pip_scale <= 0.5:
+        print("--pip-scale must be between 0.1 and 0.5.", file=sys.stderr)
+        return 1
 
     preset = QUALITY_PRESETS[args.quality]
     capture_width = args.width if args.width is not None else preset["width"]
@@ -425,10 +670,35 @@ def main() -> int:
     if args.mode == "client":
         print_usb_pico_hint(args.pc_service_ip, args.ip, args.port)
 
+    main_pipeline: rs.pipeline | None = None
+    pip_pipeline: rs.pipeline | None = None
+    pipelines: list[rs.pipeline] = []
+    readers: list[PipelineReader] = []
     try:
-        pipeline, _ = init_camera_pipeline(capture_width, capture_height, args.fps, args.serial)
+        if pip_mode:
+            main_pipeline, pip_pipeline, main_sn, pip_sn = init_pip_camera_pipelines(
+                capture_width, capture_height, args.fps, args.main_serial, args.pip_serial
+            )
+            pipelines = [main_pipeline, pip_pipeline]
+            get_frame, readers = make_frame_source(
+                main_pipeline, pip_pipeline, args.pip_scale, args.pip_margin
+            )
+            print("Waiting for first frames from both cameras...")
+            get_frame()
+            print("Both cameras producing frames.")
+        else:
+            main_pipeline, use_serial = init_camera_pipeline(
+                capture_width, capture_height, args.fps, args.serial
+            )
+            pipelines = [main_pipeline]
+            get_frame, readers = make_frame_source(main_pipeline)
+            get_frame()
     except RuntimeError as exc:
         print(exc, file=sys.stderr)
+        for reader in readers:
+            reader.stop()
+        for pipeline in pipelines:
+            pipeline.stop()
         return 1
 
     if not stereo_sbs:
@@ -437,6 +707,8 @@ def main() -> int:
         layout_desc = "SBS + letterbox (TV-style panel per eye)"
     else:
         layout_desc = "SBS (same full image → each eye)"
+    if pip_mode:
+        layout_desc = f"PiP main={main_sn} pip={pip_sn} scale={args.pip_scale} + {layout_desc}"
     print(
         f"Quality={args.quality}  capture {capture_width}x{capture_height} @ {args.fps}fps → "
         f"encode {encode_width}x{encode_height}  bitrate={bitrate // 1_000_000}Mbps  ({layout_desc})"
@@ -452,12 +724,17 @@ def main() -> int:
             sock = accept_tcp_server(args.bind, args.port)
     except ConnectionError as exc:
         print(exc, file=sys.stderr)
-        pipeline.stop()
+        for reader in readers:
+            reader.stop()
+        for pipeline in pipelines:
+            pipeline.stop()
         return 1
 
     return stream_to_vr(
         sock=sock,
-        pipeline=pipeline,
+        get_frame=get_frame,
+        readers=readers,
+        pipelines=pipelines,
         codec=codec,
         fps=args.fps,
         stereo_sbs=stereo_sbs,
