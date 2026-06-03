@@ -31,6 +31,8 @@ Dual-camera picture-in-picture (racing-game style: main view + corner inset):
     --main-serial <rear_serial> --pip-serial <side_serial> \\
     --quality balanced --pip-scale 0.28
 
+  Press **A** on the right controller to swap main / PiP cameras (requires PC Service).
+
 Requires: pyrealsense2, opencv-python, av, numpy
 """
 
@@ -196,6 +198,47 @@ def compose_pip_frame(
         )
     out[y0 : y0 + pip_h, x0 : x0 + pip_w] = pip_resized
     return out
+
+
+class PipFrameSource:
+    """Compose two camera feeds; supports swapping which camera is fullscreen vs PiP."""
+
+    def __init__(
+        self,
+        main_reader: PipelineReader,
+        pip_reader: PipelineReader,
+        main_label: str,
+        pip_label: str,
+        pip_scale: float = 0.28,
+        pip_margin: int = 16,
+    ):
+        self._main_reader = main_reader
+        self._pip_reader = pip_reader
+        self._main_label = main_label
+        self._pip_label = pip_label
+        self._pip_scale = pip_scale
+        self._pip_margin = pip_margin
+        self._swapped = False
+        self._lock = threading.Lock()
+
+    def toggle_swap(self) -> bool:
+        with self._lock:
+            self._swapped = not self._swapped
+            swapped = self._swapped
+        if swapped:
+            print(f"[swap] fullscreen={self._pip_label}  PiP={self._main_label}")
+        else:
+            print(f"[swap] fullscreen={self._main_label}  PiP={self._pip_label}")
+        return swapped
+
+    def get_frame(self) -> np.ndarray:
+        main_color = self._main_reader.get_latest()
+        pip_color = self._pip_reader.get_latest()
+        with self._lock:
+            swapped = self._swapped
+        if swapped:
+            main_color, pip_color = pip_color, main_color
+        return compose_pip_frame(main_color, pip_color, self._pip_scale, self._pip_margin)
 
 
 def prepare_frame(color_bgr: np.ndarray, stereo_sbs: bool, layout: str = "sbs") -> np.ndarray:
@@ -394,6 +437,7 @@ def stream_loop(
     stereo_sbs: bool,
     layout: str,
     preview: PreviewWindow | None,
+    before_frame: Callable[[], bool] | None = None,
 ) -> int:
     frame_interval = 1.0 / fps
     next_frame_time = time.perf_counter()
@@ -411,8 +455,11 @@ def stream_loop(
                 time.sleep(next_frame_time - now)
             next_frame_time += frame_interval
 
-            color = get_frame()
             force_keyframe = frames_sent == 0
+            if before_frame is not None:
+                force_keyframe = force_keyframe or before_frame()
+
+            color = get_frame()
 
             if preview is not None:
                 preview.update(prepare_frame(color, stereo_sbs, layout))
@@ -460,6 +507,13 @@ def stream_loop(
     return 0
 
 
+def _device_label(serial: str) -> str:
+    for name, sn in list_devices():
+        if sn == serial:
+            return name.replace("Intel RealSense ", "")
+    return serial
+
+
 def _print_devices() -> list[tuple[str, str]]:
     devices = list_devices()
     if not devices:
@@ -467,6 +521,14 @@ def _print_devices() -> list[tuple[str, str]]:
     for name, sn in devices:
         print(f"  {name}  (serial: {sn})")
     return devices
+
+
+def pick_default_camera_serial(devices: list[tuple[str, str]]) -> str:
+    """When multiple cameras are connected, prefer D435I over D435."""
+    for name, serial in devices:
+        if "D435I" in name.upper().replace(" ", ""):
+            return serial
+    return devices[0][1]
 
 
 def _validate_serial(serial: str, devices: list[tuple[str, str]], label: str) -> None:
@@ -481,9 +543,12 @@ def init_camera_pipeline(
     serial: str | None,
 ) -> tuple[rs.pipeline, str]:
     devices = _print_devices()
-    use_serial = serial or devices[0][1]
     if serial:
         _validate_serial(serial, devices, "Camera")
+        use_serial = serial
+    else:
+        use_serial = pick_default_camera_serial(devices)
+        print(f"Auto-selected camera: {_device_label(use_serial)}  (serial: {use_serial})")
 
     print("Warming up RealSense (before connecting to headset)...")
     pipeline, _ = warmup_camera(use_serial, capture_width, capture_height, fps)
@@ -514,22 +579,67 @@ def make_frame_source(
     pip_pipeline: rs.pipeline | None = None,
     pip_scale: float = 0.28,
     pip_margin: int = 16,
-) -> tuple[Callable[[], np.ndarray], list[PipelineReader]]:
+    main_label: str = "main",
+    pip_label: str = "pip",
+) -> tuple[Callable[[], np.ndarray], list[PipelineReader], PipFrameSource | None]:
     main_reader = PipelineReader(main_pipeline, "main")
     readers: list[PipelineReader] = [main_reader]
-    pip_reader: PipelineReader | None = None
-    if pip_pipeline is not None:
-        pip_reader = PipelineReader(pip_pipeline, "pip")
-        readers.append(pip_reader)
+    if pip_pipeline is None:
 
-    def get_frame() -> np.ndarray:
-        main_color = main_reader.get_latest()
-        if pip_reader is None:
-            return main_color
-        pip_color = pip_reader.get_latest()
-        return compose_pip_frame(main_color, pip_color, pip_scale, pip_margin)
+        def get_frame() -> np.ndarray:
+            return main_reader.get_latest()
 
-    return get_frame, readers
+        return get_frame, readers, None
+
+    pip_reader = PipelineReader(pip_pipeline, "pip")
+    readers.append(pip_reader)
+    pip_source = PipFrameSource(
+        main_reader, pip_reader, main_label, pip_label, pip_scale, pip_margin
+    )
+    return pip_source.get_frame, readers, pip_source
+
+
+def init_swap_on_a_button(
+    pip_source: PipFrameSource,
+    button: str = "A",
+) -> tuple[Callable[[], bool], Callable[[], None]]:
+    """Poll VR controller button via XRoboToolkit SDK; returns (before_frame, cleanup)."""
+    try:
+        import xrobotoolkit_sdk as xrt
+    except ImportError as exc:
+        raise ImportError(
+            "xrobotoolkit_sdk not installed in this Python env. "
+            "Run: conda activate xrobot"
+        ) from exc
+
+    button_getters = {
+        "A": xrt.get_A_button,
+        "B": xrt.get_B_button,
+        "X": xrt.get_X_button,
+        "Y": xrt.get_Y_button,
+    }
+    if button not in button_getters:
+        raise ValueError(f"Unsupported swap button: {button}")
+
+    xrt.init()
+    print(f"XRoboToolkit SDK ready — press **{button}** to swap main / PiP.")
+    prev_pressed = False
+    read_button = button_getters[button]
+
+    def before_frame() -> bool:
+        nonlocal prev_pressed
+        pressed = bool(read_button())
+        force_keyframe = False
+        if pressed and not prev_pressed:
+            pip_source.toggle_swap()
+            force_keyframe = True
+        prev_pressed = pressed
+        return force_keyframe
+
+    def cleanup() -> None:
+        xrt.close()
+
+    return before_frame, cleanup
 
 
 def stream_to_vr(
@@ -542,6 +652,8 @@ def stream_to_vr(
     stereo_sbs: bool,
     layout: str,
     preview: bool,
+    before_frame: Callable[[], bool] | None = None,
+    on_stop: Callable[[], None] | None = None,
 ) -> int:
     print("Streaming... (Ctrl+C to stop)")
 
@@ -560,8 +672,12 @@ def stream_to_vr(
 
     preview_win = PreviewWindow() if preview else None
     try:
-        return stream_loop(sock, get_frame, codec, fps, stereo_sbs, layout, preview_win)
+        return stream_loop(
+            sock, get_frame, codec, fps, stereo_sbs, layout, preview_win, before_frame=before_frame
+        )
     finally:
+        if on_stop is not None:
+            on_stop()
         for reader in readers:
             reader.stop()
         for pipeline in pipelines:
@@ -638,6 +754,17 @@ def main() -> int:
     )
     parser.add_argument("--preview", action="store_true", help="Local OpenCV preview")
     parser.add_argument(
+        "--no-swap-on-a",
+        action="store_true",
+        help="Disable controller-button swap of main/PiP cameras (PiP mode only)",
+    )
+    parser.add_argument(
+        "--swap-button",
+        choices=("A", "B", "X", "Y"),
+        default="A",
+        help="Controller button to swap main/PiP (default: A). Requires conda env xrobot + PC Service.",
+    )
+    parser.add_argument(
         "--connect-timeout",
         type=float,
         default=120.0,
@@ -674,24 +801,40 @@ def main() -> int:
     pip_pipeline: rs.pipeline | None = None
     pipelines: list[rs.pipeline] = []
     readers: list[PipelineReader] = []
+    pip_source: PipFrameSource | None = None
+    before_frame: Callable[[], bool] | None = None
+    on_stop: Callable[[], None] | None = None
     try:
         if pip_mode:
             main_pipeline, pip_pipeline, main_sn, pip_sn = init_pip_camera_pipelines(
                 capture_width, capture_height, args.fps, args.main_serial, args.pip_serial
             )
             pipelines = [main_pipeline, pip_pipeline]
-            get_frame, readers = make_frame_source(
-                main_pipeline, pip_pipeline, args.pip_scale, args.pip_margin
+            get_frame, readers, pip_source = make_frame_source(
+                main_pipeline,
+                pip_pipeline,
+                args.pip_scale,
+                args.pip_margin,
+                main_label=_device_label(main_sn),
+                pip_label=_device_label(pip_sn),
             )
             print("Waiting for first frames from both cameras...")
             get_frame()
             print("Both cameras producing frames.")
+            if not args.no_swap_on_a:
+                try:
+                    before_frame, on_stop = init_swap_on_a_button(pip_source, button=args.swap_button)
+                except ImportError as exc:
+                    print(f"Warning: controller swap unavailable — {exc}", file=sys.stderr)
+                    print("  Also ensure XRoboToolkit PC Service is running.", file=sys.stderr)
+                except Exception as exc:
+                    print(f"Warning: controller swap unavailable ({exc})", file=sys.stderr)
         else:
             main_pipeline, use_serial = init_camera_pipeline(
                 capture_width, capture_height, args.fps, args.serial
             )
             pipelines = [main_pipeline]
-            get_frame, readers = make_frame_source(main_pipeline)
+            get_frame, readers, _ = make_frame_source(main_pipeline)
             get_frame()
     except RuntimeError as exc:
         print(exc, file=sys.stderr)
@@ -740,6 +883,8 @@ def main() -> int:
         stereo_sbs=stereo_sbs,
         layout=args.layout,
         preview=args.preview,
+        before_frame=before_frame,
+        on_stop=on_stop,
     )
 
 
