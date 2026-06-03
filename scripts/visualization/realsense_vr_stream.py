@@ -16,7 +16,14 @@ Wi‑Fi PICO: use --ip <headset Wi‑Fi IP> instead of 192.168.3.198.
 
 Fallback server mode (rare): --mode server
 
-ZEDMINI expects side-by-side stereo (default). Use --mono if the image stays white.
+ZEDMINI needs side-by-side (default): same full image in left & right halves of the
+stream — one per eye. Plain --mono often splits one frame across eyes (dizzy/blur).
+
+VR "big screen": use --layout screen (letterboxed panel per eye), then on PICO open
+Remote Vision (ZEDMINI → Listen) and press **B** on the right controller to toggle
+2D / stereo view. The video panel is a floating window in the scene (Unity client).
+
+Quality: --quality balanced|high|low  (or --width/--height/--bitrate).
 
 Requires: pyrealsense2, opencv-python, av, numpy
 """
@@ -34,6 +41,12 @@ import cv2
 import numpy as np
 import pyrealsense2 as rs
 from fractions import Fraction
+
+QUALITY_PRESETS = {
+    "low": {"width": 640, "height": 480, "bitrate": 2_000_000, "preset": "ultrafast"},
+    "balanced": {"width": 1280, "height": 720, "bitrate": 6_000_000, "preset": "veryfast"},
+    "high": {"width": 1920, "height": 1080, "bitrate": 10_000_000, "preset": "fast"},
+}
 
 
 def list_devices() -> list[tuple[str, str]]:
@@ -86,6 +99,8 @@ def print_usb_pico_hint(pc_service_ip: str, headset_ip: str, port: int) -> None:
     print(f"     ZEDMINI → Listen → camera IP = {pc_service_ip}")
     print(f"  3. PC will connect to {headset_ip}:{port} and start sending video.")
     print("  Do NOT tap Listen before the script — Listen will time out.")
+    print("  Stream: side-by-side (default) or --layout screen for a TV-style panel.")
+    print("  In VR: press **B** (right controller) to switch 2D / stereo display.")
     print("===\n")
 
 
@@ -132,13 +147,37 @@ def print_pc_ip_hint(port: int) -> None:
     print("===\n")
 
 
-def prepare_frame(color_bgr: np.ndarray, stereo_sbs: bool) -> np.ndarray:
-    if stereo_sbs:
-        return np.hstack((color_bgr, color_bgr))
-    return color_bgr
+def _letterbox_pane(color_bgr: np.ndarray, pane_w: int, pane_h: int) -> np.ndarray:
+    """Scale image to fit inside pane_w×pane_h, centered on black (TV-style)."""
+    h, w = color_bgr.shape[:2]
+    scale = min(pane_w / w, pane_h / h)
+    new_w = max(1, int(w * scale))
+    new_h = max(1, int(h * scale))
+    resized = cv2.resize(color_bgr, (new_w, new_h), interpolation=cv2.INTER_AREA)
+    canvas = np.zeros((pane_h, pane_w, 3), dtype=np.uint8)
+    y0 = (pane_h - new_h) // 2
+    x0 = (pane_w - new_w) // 2
+    canvas[y0 : y0 + new_h, x0 : x0 + new_w] = resized
+    return canvas
 
 
-def create_h264_encoder(width: int, height: int, fps: int, bitrate: int) -> av.codec.CodecContext:
+def prepare_frame(color_bgr: np.ndarray, stereo_sbs: bool, layout: str = "sbs") -> np.ndarray:
+    if not stereo_sbs:
+        return color_bgr
+    pane_h, pane_w = color_bgr.shape[:2]
+    if layout == "screen":
+        pane = _letterbox_pane(color_bgr, pane_w, pane_h)
+        return np.hstack((pane, pane))
+    return np.hstack((color_bgr, color_bgr))
+
+
+def create_h264_encoder(
+    width: int,
+    height: int,
+    fps: int,
+    bitrate: int,
+    x264_preset: str = "veryfast",
+) -> av.codec.CodecContext:
     codec = av.CodecContext.create("libx264", "w")
     codec.width = width
     codec.height = height
@@ -149,7 +188,7 @@ def create_h264_encoder(width: int, height: int, fps: int, bitrate: int) -> av.c
     codec.gop_size = fps
     codec.max_b_frames = 0
     codec.options = {
-        "preset": "ultrafast",
+        "preset": x264_preset,
         "tune": "zerolatency",
         "profile": "baseline",
         "x264-params": "annexb=1:repeat-headers=1",
@@ -203,9 +242,10 @@ def encode_and_send_frame(
     codec: av.codec.CodecContext,
     color_bgr: np.ndarray,
     stereo_sbs: bool,
+    layout: str = "sbs",
 ) -> int:
     """Encode one BGR frame and send all resulting H.264 packets. Returns packet count."""
-    color_bgr = prepare_frame(color_bgr, stereo_sbs)
+    color_bgr = prepare_frame(color_bgr, stereo_sbs, layout)
     video_frame = av.VideoFrame.from_ndarray(color_bgr, format="bgr24").reformat(format="yuv420p")
     count = 0
     for packet in codec.encode(video_frame):
@@ -222,6 +262,7 @@ def stream_loop(
     codec: av.codec.CodecContext,
     fps: int,
     stereo_sbs: bool,
+    layout: str,
     preview: bool,
 ) -> int:
     frame_interval = 1.0 / fps
@@ -237,14 +278,13 @@ def stream_loop(
 
             frames = pipeline.wait_for_frames(timeout_ms=500)
             color = np.asanyarray(frames.get_color_frame().get_data())
-            color = prepare_frame(color, stereo_sbs)
 
             if preview:
-                cv2.imshow("RealSense (preview)", color)
+                cv2.imshow("RealSense (preview)", prepare_frame(color, stereo_sbs, layout))
                 if cv2.waitKey(1) & 0xFF == ord("q"):
                     break
 
-            packets_sent += encode_and_send_frame(sock, codec, color, stereo_sbs)
+            packets_sent += encode_and_send_frame(sock, codec, color, stereo_sbs, layout)
 
     except KeyboardInterrupt:
         print("\nStopped by user.")
@@ -294,6 +334,7 @@ def stream_to_vr(
     codec: av.codec.CodecContext,
     fps: int,
     stereo_sbs: bool,
+    layout: str,
     preview: bool,
 ) -> int:
     print("Streaming... (Ctrl+C to stop)")
@@ -303,7 +344,7 @@ def stream_to_vr(
     for i in range(5):
         frames = pipeline.wait_for_frames(timeout_ms=2000)
         color = np.asanyarray(frames.get_color_frame().get_data())
-        sent += encode_and_send_frame(sock, codec, color, stereo_sbs)
+        sent += encode_and_send_frame(sock, codec, color, stereo_sbs, layout)
         if sent > 0:
             break
     print(f"Sent {sent} H.264 packet(s) immediately after connect.")
@@ -311,7 +352,7 @@ def stream_to_vr(
         print("Warning: encoder produced no packets; headset may disconnect.", file=sys.stderr)
 
     try:
-        return stream_loop(sock, pipeline, codec, fps, stereo_sbs, preview)
+        return stream_loop(sock, pipeline, codec, fps, stereo_sbs, layout, preview)
     finally:
         pipeline.stop()
 
@@ -338,15 +379,27 @@ def main() -> int:
     )
     parser.add_argument("--bind", type=str, default="0.0.0.0", help="Listen address for server mode")
     parser.add_argument("--port", type=int, default=12345, help="TCP port (default: 12345)")
-    parser.add_argument("--width", type=int, default=1280, help="Capture width per eye (default: 1280)")
-    parser.add_argument("--height", type=int, default=720, help="Capture height (default: 720)")
+    parser.add_argument(
+        "--quality",
+        choices=tuple(QUALITY_PRESETS),
+        default="balanced",
+        help="Resolution/bitrate trade-off (default: balanced)",
+    )
+    parser.add_argument("--width", type=int, default=None, help="Override capture width")
+    parser.add_argument("--height", type=int, default=None, help="Override capture height")
+    parser.add_argument(
+        "--layout",
+        choices=("sbs", "screen"),
+        default="sbs",
+        help="sbs: full frame per eye (default). screen: letterboxed TV panel per eye.",
+    )
     parser.add_argument(
         "--mono",
         action="store_true",
-        help="Single eye only (do not duplicate to side-by-side; try if ZEDMINI shows white screen)",
+        help="Send single frame (no L|R duplicate). May look sharp one-eye-only on ZEDMINI.",
     )
     parser.add_argument("--fps", type=int, default=30, help="Frame rate (default: 30)")
-    parser.add_argument("--bitrate", type=int, default=4_000_000, help="H.264 bitrate bps (default: 4M)")
+    parser.add_argument("--bitrate", type=int, default=None, help="Override H.264 bitrate (bps)")
     parser.add_argument("--serial", type=str, default=None, help="RealSense serial")
     parser.add_argument("--preview", action="store_true", help="Local OpenCV preview")
     parser.add_argument(
@@ -357,11 +410,16 @@ def main() -> int:
     )
     args = parser.parse_args()
 
+    preset = QUALITY_PRESETS[args.quality]
+    capture_width = args.width if args.width is not None else preset["width"]
+    capture_height = args.height if args.height is not None else preset["height"]
+    bitrate = args.bitrate if args.bitrate is not None else preset["bitrate"]
+    x264_preset = preset["preset"]
+    # ZEDMINI maps the left/right halves of the stream to left/right eyes.
+    # Mono sends one wide image → each eye often gets half → discomfort when both open.
     stereo_sbs = not args.mono
-    capture_width = args.width
-    capture_height = args.height
-    encode_width = args.width * 2 if stereo_sbs else args.width
-    encode_height = args.height
+    encode_width = capture_width * 2 if stereo_sbs else capture_width
+    encode_height = capture_height
 
     if args.mode == "client":
         print_usb_pico_hint(args.pc_service_ip, args.ip, args.port)
@@ -372,11 +430,17 @@ def main() -> int:
         print(exc, file=sys.stderr)
         return 1
 
+    if not stereo_sbs:
+        layout_desc = "mono (experimental — avoid on ZEDMINI)"
+    elif args.layout == "screen":
+        layout_desc = "SBS + letterbox (TV-style panel per eye)"
+    else:
+        layout_desc = "SBS (same full image → each eye)"
     print(
-        f"Capture {capture_width}x{capture_height} @ {args.fps}fps → "
-        f"encode {encode_width}x{encode_height} ({'SBS stereo' if stereo_sbs else 'mono'})"
+        f"Quality={args.quality}  capture {capture_width}x{capture_height} @ {args.fps}fps → "
+        f"encode {encode_width}x{encode_height}  bitrate={bitrate // 1_000_000}Mbps  ({layout_desc})"
     )
-    codec = create_h264_encoder(encode_width, encode_height, args.fps, args.bitrate)
+    codec = create_h264_encoder(encode_width, encode_height, args.fps, bitrate, x264_preset)
 
     try:
         if args.mode == "client":
@@ -396,6 +460,7 @@ def main() -> int:
         codec=codec,
         fps=args.fps,
         stereo_sbs=stereo_sbs,
+        layout=args.layout,
         preview=args.preview,
     )
 
