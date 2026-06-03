@@ -8,7 +8,8 @@ USB PICO (typical):
   - PC / PC-Service IP: 192.168.181.64  (enter as "camera IP" on the headset)
 
   Order matters — do NOT tap Listen first (it times out during camera warmup):
-  1. PC: python scripts/visualization/realsense_vr_stream.py --ip 192.168.3.198
+  1. PC: python scripts/visualization/realsense_vr_stream.py
+     (defaults: USB headset IP, layout=screen, quality=high)
   2. When the terminal shows "waiting for Listen", on PICO: ZEDMINI → Listen,
      camera IP = 192.168.181.64
 
@@ -23,7 +24,7 @@ VR "big screen": use --layout screen (letterboxed panel per eye), then on PICO o
 Remote Vision (ZEDMINI → Listen) and press **B** on the right controller to toggle
 2D / stereo view. The video panel is a floating window in the scene (Unity client).
 
-Quality: --quality balanced|high|low  (or --width/--height/--bitrate).
+Default: layout=screen, quality=high. Override with --layout sbs, --quality balanced|low.
 
 Requires: pyrealsense2, opencv-python, av, numpy
 """
@@ -382,16 +383,16 @@ def main() -> int:
     parser.add_argument(
         "--quality",
         choices=tuple(QUALITY_PRESETS),
-        default="balanced",
-        help="Resolution/bitrate trade-off (default: balanced)",
+        default="high",
+        help="Resolution/bitrate trade-off (default: high)",
     )
     parser.add_argument("--width", type=int, default=None, help="Override capture width")
     parser.add_argument("--height", type=int, default=None, help="Override capture height")
     parser.add_argument(
         "--layout",
         choices=("sbs", "screen"),
-        default="sbs",
-        help="sbs: full frame per eye (default). screen: letterboxed TV panel per eye.",
+        default="screen",
+        help="screen: letterboxed TV panel per eye (default). sbs: full frame per eye.",
     )
     parser.add_argument(
         "--mono",
