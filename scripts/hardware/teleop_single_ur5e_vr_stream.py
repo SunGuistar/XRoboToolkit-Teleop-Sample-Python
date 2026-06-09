@@ -11,6 +11,9 @@ Typical usage (lab defaults):
     --main-serial 406122070449 --pip-serial 148522072134 \\
     --quality balanced --pip-scale 0.38
 
+  # VR 右下角 PiP 显示对准调试叠加（与 debug_alignment_vision.py 相同）
+  python scripts/hardware/teleop_single_ur5e_vr_stream.py --debug
+
 Controls (default controller_side=right):
   - Hold grip: move arm
   - Trigger: DH gripper
@@ -27,10 +30,15 @@ import sys
 import threading
 import time
 from pathlib import Path
+from collections.abc import Callable
 from typing import Literal
 
 import numpy as np
 import tyro
+
+from xrobotoolkit_teleop.shared_autonomy.alignment import AlignmentVisionRenderer
+from xrobotoolkit_teleop.shared_autonomy.config import COLOR_HSV_PRESETS, TargetDetectionConfig
+from xrobotoolkit_teleop.shared_autonomy.gripper_color_config import GripperColorConfig
 
 _VR_STREAM_PATH = Path(__file__).resolve().parents[1] / "visualization" / "realsense_vr_stream.py"
 _spec = importlib.util.spec_from_file_location("realsense_vr_stream", _VR_STREAM_PATH)
@@ -80,6 +88,36 @@ def _run_reset(robot_ip: str, initial_joint: np.ndarray) -> None:
     ur.close()
 
 
+def _make_alignment_renderer() -> AlignmentVisionRenderer:
+    """与 debug_alignment_vision.py 默认参数一致的对准视觉渲染器。"""
+    preset_lower, preset_upper = COLOR_HSV_PRESETS["target"]
+    target_config = TargetDetectionConfig(hsv_lower=preset_lower, hsv_upper=preset_upper)
+    gripper_config = GripperColorConfig()
+    return AlignmentVisionRenderer(target_config, gripper_config)
+
+
+def _wrap_get_frame_with_alignment_debug(
+    pip_source: vr.PipFrameSource,
+    renderer: AlignmentVisionRenderer,
+) -> Callable[[], np.ndarray]:
+    """物理 pip 相机帧叠加对准调试画面，再按 swap 状态合成 VR 流。"""
+
+    def get_frame() -> np.ndarray:
+        main_color = pip_source._main_reader.get_latest()
+        pip_vis = renderer.render(pip_source._pip_reader.get_latest())
+        with pip_source._lock:
+            swapped = pip_source._swapped
+        if swapped:
+            return vr.compose_pip_frame(
+                pip_vis, main_color, pip_source._pip_scale, pip_source._pip_margin
+            )
+        return vr.compose_pip_frame(
+            main_color, pip_vis, pip_source._pip_scale, pip_source._pip_margin
+        )
+
+    return get_frame
+
+
 def _start_arm_threads(arm_controller: SingleArmURController, stop_signal: threading.Event) -> list[threading.Thread]:
     threads = [
         threading.Thread(target=arm_controller.run_robot_thread, args=(stop_signal,), name="ur-servo"),
@@ -118,6 +156,7 @@ def main(
     preview: bool = False,
     layout: Literal["sbs", "screen"] = "screen",
     fps: int = 30,
+    debug: bool = False,
 ) -> None:
     if controller_side == "left":
         manipulator_config = LEFT_CONTROLLER_MANIPULATOR_CONFIG
@@ -216,6 +255,15 @@ def main(
         before_frame = None
         if pip_source is not None and not no_swap_on_a:
             before_frame = vr.init_swap_on_xr_client(pip_source, xr_client, button=swap_button)
+
+        if debug:
+            if pip_source is None:
+                raise RuntimeError("--debug 需要双相机 PiP（请指定 --pip-serial）。")
+            if pip_serial != DEFAULT_PIP_SERIAL:
+                print(f"VR PiP debug overlay: aux camera {pip_serial}")
+            else:
+                print(f"VR PiP debug overlay: aux camera {pip_serial} (alignment vision)")
+            get_frame = _wrap_get_frame_with_alignment_debug(pip_source, _make_alignment_renderer())
 
         layout_desc = (
             f"PiP main={main_sn} pip={pip_sn} scale={pip_scale} + "

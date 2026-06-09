@@ -22,15 +22,11 @@ import numpy as np
 import pyrealsense2 as rs
 import tyro
 
-from xrobotoolkit_teleop.shared_autonomy.alignment import compute_alignment_error, draw_alignment_overlay
+from xrobotoolkit_teleop.shared_autonomy.alignment import AlignmentVisionRenderer
 from xrobotoolkit_teleop.shared_autonomy.config import COLOR_HSV_PRESETS, TargetDetectionConfig
 from xrobotoolkit_teleop.shared_autonomy.gripper_color_config import GripperColorConfig
-from xrobotoolkit_teleop.shared_autonomy.gripper_detection import (
-    GripperSmoother,
-    detect_gripper,
-    draw_gripper_overlay,
-)
-from xrobotoolkit_teleop.shared_autonomy.target_detection import TargetSmoother, detect_target, draw_target_overlay
+from xrobotoolkit_teleop.shared_autonomy.gripper_detection import detect_gripper
+from xrobotoolkit_teleop.shared_autonomy.target_detection import detect_target
 
 DEFAULT_AUX_SERIAL = "148522072134"
 
@@ -99,8 +95,7 @@ def main(
         enable_temporal_smooth=enable_gripper_smooth,
     )
 
-    target_smoother = TargetSmoother(target_config)
-    gripper_smoother = GripperSmoother(gripper_config)
+    renderer = AlignmentVisionRenderer(target_config, gripper_config)
 
     print(f"辅助相机 {serial}  目标={color_preset}")
     print(f"夹爪 HSV upper={grip_hsv_upper}  GRIPPER ROI x=[{grip_roi_x_min},{grip_roi_x_max}] y=[{grip_roi_y_min},{grip_roi_y_max}]")
@@ -118,36 +113,33 @@ def main(
             frames = pipeline.wait_for_frames()
             color = np.asanyarray(frames.get_color_frame().get_data())
 
-            target_raw = detect_target(color, target_config, return_mask=show_mask)
-            target = target_smoother.smooth(target_raw)
-            grip_raw = detect_gripper(color, gripper_config, return_mask=show_gripper_mask)
-            grip = gripper_smoother.smooth(grip_raw)
-            alignment = compute_alignment_error(target, grip)
-
-            overlay = draw_target_overlay(color, target, target_config)
-            overlay = draw_gripper_overlay(overlay, grip, gripper_config)
-            overlay = draw_alignment_overlay(overlay, alignment)
-
-            panels = [overlay]
-            if show_mask and target_raw.mask is not None:
-                panels.append(cv2.cvtColor(target_raw.mask, cv2.COLOR_GRAY2BGR))
-            if show_gripper_mask and grip_raw.mask is not None:
-                panels.append(cv2.cvtColor(grip_raw.mask, cv2.COLOR_GRAY2BGR))
-            display = np.hstack(panels) if len(panels) > 1 else overlay
+            frame = renderer.process(color)
+            panels = [frame.overlay]
+            if show_mask:
+                target_raw = detect_target(color, target_config, return_mask=True)
+                if target_raw.mask is not None:
+                    panels.append(cv2.cvtColor(target_raw.mask, cv2.COLOR_GRAY2BGR))
+            if show_gripper_mask:
+                grip_raw = detect_gripper(color, gripper_config, return_mask=True)
+                if grip_raw.mask is not None:
+                    panels.append(cv2.cvtColor(grip_raw.mask, cv2.COLOR_GRAY2BGR))
+            display = np.hstack(panels) if len(panels) > 1 else frame.overlay
 
             cv2.imshow(window, display)
             key = cv2.waitKey(1) & 0xFF
             if key == ord("q"):
                 break
             if key == ord("s"):
-                if alignment.valid:
+                if frame.alignment.valid:
                     print(
-                        f"[对准] target=({alignment.u_target},{alignment.v_target})  "
-                        f"gripper=({alignment.u_gripper},{alignment.v_gripper})  "
-                        f"du={alignment.du:+.1f}  dv={alignment.dv:+.1f}"
+                        f"[对准] target=({frame.alignment.u_target},{frame.alignment.v_target})  "
+                        f"gripper=({frame.alignment.u_gripper},{frame.alignment.v_gripper})  "
+                        f"du={frame.alignment.du:+.1f}  dv={frame.alignment.dv:+.1f}"
                     )
                 else:
-                    print(f"[对准] 无效  target={target.found}  gripper={grip.found}")
+                    print(
+                        f"[对准] 无效  target={frame.target.found}  gripper={frame.gripper.found}"
+                    )
     finally:
         pipeline.stop()
         cv2.destroyAllWindows()

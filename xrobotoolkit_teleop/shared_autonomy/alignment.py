@@ -7,8 +7,20 @@ from dataclasses import dataclass
 import cv2
 import numpy as np
 
-from xrobotoolkit_teleop.shared_autonomy.gripper_detection import GripperDetectionResult
-from xrobotoolkit_teleop.shared_autonomy.target_detection import TargetDetectionResult
+from xrobotoolkit_teleop.shared_autonomy.config import TargetDetectionConfig
+from xrobotoolkit_teleop.shared_autonomy.gripper_color_config import GripperColorConfig
+from xrobotoolkit_teleop.shared_autonomy.gripper_detection import (
+    GripperDetectionResult,
+    GripperSmoother,
+    detect_gripper,
+    draw_gripper_overlay,
+)
+from xrobotoolkit_teleop.shared_autonomy.target_detection import (
+    TargetDetectionResult,
+    TargetSmoother,
+    detect_target,
+    draw_target_overlay,
+)
 
 
 @dataclass
@@ -88,3 +100,47 @@ def draw_alignment_overlay(
         cv2.LINE_AA,
     )
     return out
+
+
+@dataclass
+class AlignmentVisionFrame:
+    overlay: np.ndarray
+    target: TargetDetectionResult
+    gripper: GripperDetectionResult
+    alignment: AlignmentError
+
+
+def render_alignment_debug_overlay(
+    frame_bgr: np.ndarray,
+    target: TargetDetectionResult,
+    gripper: GripperDetectionResult,
+    alignment: AlignmentError,
+    target_config: TargetDetectionConfig,
+    gripper_config: GripperColorConfig,
+) -> np.ndarray:
+    """与 debug_alignment_vision.py 相同：目标(蓝) + 夹爪(绿) + du/dv(青)。"""
+    out = draw_target_overlay(frame_bgr, target, target_config)
+    out = draw_gripper_overlay(out, gripper, gripper_config)
+    return draw_alignment_overlay(out, alignment)
+
+
+class AlignmentVisionRenderer:
+    """在辅助相机帧上运行对准视觉叠加（供 VR PiP / 调试脚本复用）。"""
+
+    def __init__(self, target_config: TargetDetectionConfig, gripper_config: GripperColorConfig):
+        self._target_config = target_config
+        self._gripper_config = gripper_config
+        self._target_smoother = TargetSmoother(target_config)
+        self._gripper_smoother = GripperSmoother(gripper_config)
+
+    def process(self, pip_bgr: np.ndarray) -> AlignmentVisionFrame:
+        grip = self._gripper_smoother.smooth(detect_gripper(pip_bgr, self._gripper_config))
+        target = self._target_smoother.smooth(detect_target(pip_bgr, self._target_config))
+        alignment = compute_alignment_error(target, grip)
+        overlay = render_alignment_debug_overlay(
+            pip_bgr, target, grip, alignment, self._target_config, self._gripper_config
+        )
+        return AlignmentVisionFrame(overlay=overlay, target=target, gripper=grip, alignment=alignment)
+
+    def render(self, pip_bgr: np.ndarray) -> np.ndarray:
+        return self.process(pip_bgr).overlay
