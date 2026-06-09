@@ -51,7 +51,7 @@ def main(
     height: int = 720,
     fps: int = 30,
     show_mask: bool = False,
-    color_preset: Literal["silver", "white", "black"] = "silver",
+    color_preset: Literal["target", "silver", "white", "black"] = "target",
     hsv_lower: tuple[int, int, int] | None = None,
     hsv_upper: tuple[int, int, int] | None = None,
     roi_y_min: float = 0.46,

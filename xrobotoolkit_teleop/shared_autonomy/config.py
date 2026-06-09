@@ -5,10 +5,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-ColorPreset = Literal["silver", "white", "black"]
+ColorPreset = Literal["target", "silver", "white", "black"]
 
-# 颜色预设：白盒贴在白墙/白桌上时，优先用 silver（盒面中间银色图案），避免误检背景。
+# 盒面目标色 #454C45 → RGB(69,76,69) → OpenCV HSV 中心 (60,23,76)
+TARGET_HEX_COLOR = "#454C45"
+
+# 颜色预设
 COLOR_HSV_PRESETS: dict[ColorPreset, tuple[tuple[int, int, int], tuple[int, int, int]]] = {
+    "target": ((45, 0, 58), (75, 48, 94)),
     # 银色图案：中等亮度灰，V 上限要低，否则白墙/浅桌（V 很高）会占满 mask。
     "silver": ((0, 0, 65), (180, 40, 138)),
     # 白色：低饱和度 + 高亮度。易与墙面/桌面混淆，仅作备选。
@@ -23,13 +27,13 @@ class TargetDetectionConfig:
     """桌面目标（盒子）检测参数。
 
     第一版使用 HSV 颜色阈值 + ROI + 轮廓评分，不使用深度学习。
-    白盒+银色图案+白墙背景：默认 color_preset=silver，并限制 ROI 排除墙面与机械臂。
+    盒面目标色 #454C45（color_preset=target），并限制 ROI 排除墙面与机械臂。
     实验前请用 debug_target_detection.py --show-mask 微调 HSV、ROI 与面积。
     """
 
     # --- HSV 颜色阈值（OpenCV: H∈[0,179], S∈[0,255], V∈[0,255]）---
-    hsv_lower: tuple[int, int, int] = COLOR_HSV_PRESETS["silver"][0]
-    hsv_upper: tuple[int, int, int] = COLOR_HSV_PRESETS["silver"][1]
+    hsv_lower: tuple[int, int, int] = COLOR_HSV_PRESETS["target"][0]
+    hsv_upper: tuple[int, int, int] = COLOR_HSV_PRESETS["target"][1]
 
     # --- 搜索 ROI（归一化 0~1）---
     # 黄框仅表示「只在框内找目标」，不是检测到的蓝框。默认框住桌面中央盒子区域。
@@ -81,7 +85,7 @@ class TargetDetectionConfig:
     @classmethod
     def from_color_preset(
         cls,
-        preset: ColorPreset = "silver",
+        preset: ColorPreset = "target",
         **kwargs,
     ) -> "TargetDetectionConfig":
         """按颜色预设生成配置，kwargs 可覆盖任意字段。"""
