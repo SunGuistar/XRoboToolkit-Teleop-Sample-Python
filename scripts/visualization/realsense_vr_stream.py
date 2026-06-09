@@ -45,6 +45,10 @@ import sys
 import threading
 import time
 from collections.abc import Callable
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from xrobotoolkit_teleop.common.xr_client import XrClient
 
 import av
 import cv2
@@ -597,6 +601,32 @@ def make_frame_source(
         main_reader, pip_reader, main_label, pip_label, pip_scale, pip_margin
     )
     return pip_source.get_frame, readers, pip_source
+
+
+def init_swap_on_xr_client(
+    pip_source: PipFrameSource,
+    xr_client: XrClient,
+    button: str = "A",
+) -> Callable[[], bool]:
+    """Poll VR controller button via an existing XrClient (single shared xrt.init())."""
+    valid_buttons = {"A", "B", "X", "Y"}
+    if button not in valid_buttons:
+        raise ValueError(f"Unsupported swap button: {button}")
+
+    print(f"Press **{button}** on the right controller to swap main / PiP.")
+    prev_pressed = False
+
+    def before_frame() -> bool:
+        nonlocal prev_pressed
+        pressed = bool(xr_client.get_button_state_by_name(button))
+        force_keyframe = False
+        if pressed and not prev_pressed:
+            pip_source.toggle_swap()
+            force_keyframe = True
+        prev_pressed = pressed
+        return force_keyframe
+
+    return before_frame
 
 
 def init_swap_on_a_button(

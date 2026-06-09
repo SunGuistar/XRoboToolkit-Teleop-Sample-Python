@@ -1,0 +1,276 @@
+"""
+Single UR5e teleop + RealSense PiP VR stream in one process (one XRoboToolkit SDK connection).
+
+PC Service only allows one SDK feedback client; running teleop and realsense_vr_stream
+in separate terminals breaks A-button swap or arm tracking. This script shares one XrClient.
+
+Typical usage (lab defaults):
+  python scripts/hardware/teleop_single_ur5e_vr_stream.py
+
+  python scripts/hardware/teleop_single_ur5e_vr_stream.py \\
+    --main-serial 406122070449 --pip-serial 148522072134 \\
+    --quality balanced --pip-scale 0.38
+
+Controls (default controller_side=right):
+  - Hold grip: move arm
+  - Trigger: DH gripper
+  - A: swap main / PiP cameras
+  - B (in ZEDMINI): 2D / stereo view toggle
+
+Order: script starts → camera warmup → arm threads → wait for PICO Listen → stream.
+"""
+
+from __future__ import annotations
+
+import importlib.util
+import sys
+import threading
+import time
+from pathlib import Path
+from typing import Literal
+
+import numpy as np
+import tyro
+
+_VR_STREAM_PATH = Path(__file__).resolve().parents[1] / "visualization" / "realsense_vr_stream.py"
+_spec = importlib.util.spec_from_file_location("realsense_vr_stream", _VR_STREAM_PATH)
+if _spec is None or _spec.loader is None:
+    raise ImportError(f"Cannot load VR stream module from {_VR_STREAM_PATH}")
+vr = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(vr)
+from xrobotoolkit_teleop.common.xr_client import XrClient
+from xrobotoolkit_teleop.hardware.interface.universal_robots import (
+    DEFAULT_ROBOT_IP,
+    LEFT_INITIAL_JOINT_DEG,
+    LEFT_ROBOT_IP,
+    RIGHT_INITIAL_JOINT_DEG,
+    RIGHT_ROBOT_IP,
+    URController,
+)
+from xrobotoolkit_teleop.hardware.single_arm_ur_controller import (
+    LEFT_CONTROLLER_MANIPULATOR_CONFIG,
+    RIGHT_CONTROLLER_MANIPULATOR_CONFIG,
+    SingleArmURController,
+)
+
+DH_GRIPPER_PORT = "/dev/ttyUSB0"
+DH_GRIPPER_FORCE = 50
+DH_GRIPPER_SPEED = 50
+DH_GRIPPER_SLAVE_ID = 1
+DH_GRIPPER_BAUDRATE = 115200
+
+DEFAULT_MAIN_SERIAL = "406122070449"
+DEFAULT_PIP_SERIAL = "148522072134"
+
+
+def _run_reset(robot_ip: str, initial_joint: np.ndarray) -> None:
+    print(f"Reset: moving UR to home @ {robot_ip} (no VR / no DH gripper)...")
+    ur = URController(
+        robot_ip=robot_ip,
+        initial_joint_positions=np.deg2rad(initial_joint),
+        use_gripper=False,
+    )
+    try:
+        ur.reset()
+        print("Arm reset completed.")
+    except Exception as e:
+        print(f"Error during reset: {e}")
+        ur.close()
+        raise SystemExit(1) from e
+    ur.close()
+
+
+def _start_arm_threads(arm_controller: SingleArmURController, stop_signal: threading.Event) -> list[threading.Thread]:
+    threads = [
+        threading.Thread(target=arm_controller.run_robot_thread, args=(stop_signal,), name="ur-servo"),
+        threading.Thread(target=arm_controller.run_ik_thread, args=(stop_signal,), name="ur-ik"),
+    ]
+    if arm_controller.use_dh_gripper:
+        threads.append(
+            threading.Thread(
+                target=arm_controller.run_dh_gripper_thread,
+                args=(stop_signal,),
+                name="dh-gripper",
+            )
+        )
+    for t in threads:
+        t.start()
+    return threads
+
+
+def main(
+    reset: bool = False,
+    visual: bool = False,
+    robot_ip: str = DEFAULT_ROBOT_IP,
+    controller_side: Literal["left", "right"] = "right",
+    initial_joint_deg: tuple[float, float, float, float, float, float] | None = None,
+    main_serial: str = DEFAULT_MAIN_SERIAL,
+    pip_serial: str = DEFAULT_PIP_SERIAL,
+    quality: Literal["low", "balanced", "high"] = "balanced",
+    pip_scale: float = 0.28,
+    pip_margin: int = 16,
+    swap_button: Literal["A", "B", "X", "Y"] = "A",
+    no_swap_on_a: bool = False,
+    headset_ip: str = "192.168.3.198",
+    pc_service_ip: str = "192.168.181.64",
+    stream_port: int = 12345,
+    connect_timeout: float = 120.0,
+    preview: bool = False,
+    layout: Literal["sbs", "screen"] = "screen",
+    fps: int = 30,
+) -> None:
+    if controller_side == "left":
+        manipulator_config = LEFT_CONTROLLER_MANIPULATOR_CONFIG
+        default_initial_joint_deg = LEFT_INITIAL_JOINT_DEG
+        if robot_ip == DEFAULT_ROBOT_IP:
+            robot_ip = LEFT_ROBOT_IP
+    else:
+        manipulator_config = RIGHT_CONTROLLER_MANIPULATOR_CONFIG
+        default_initial_joint_deg = RIGHT_INITIAL_JOINT_DEG
+
+    initial_joint = (
+        np.array(initial_joint_deg, dtype=float)
+        if initial_joint_deg is not None
+        else default_initial_joint_deg
+    )
+
+    if reset:
+        _run_reset(robot_ip, initial_joint)
+        return
+
+    if not 0.1 <= pip_scale <= 0.5:
+        print("--pip-scale must be between 0.1 and 0.5.", file=sys.stderr)
+        raise SystemExit(1)
+
+    preset = vr.QUALITY_PRESETS[quality]
+    capture_width = preset["width"]
+    capture_height = preset["height"]
+    bitrate = preset["bitrate"]
+    x264_preset = preset["preset"]
+    stereo_sbs = True
+    encode_width = capture_width * 2
+    encode_height = capture_height
+
+    vr.print_usb_pico_hint(pc_service_ip, headset_ip, stream_port)
+
+    xr_client = XrClient()
+    arm_controller: SingleArmURController | None = None
+    stop_signal = threading.Event()
+    arm_threads: list[threading.Thread] = []
+    pipelines: list = []
+    readers: list = []
+    cameras_ready = False
+
+    def cleanup_cameras() -> None:
+        for reader in readers:
+            reader.stop()
+        for pipeline in pipelines:
+            try:
+                pipeline.stop()
+            except RuntimeError:
+                pass
+
+    try:
+        arm_controller = SingleArmURController(
+            xr_client,
+            manipulator_config=manipulator_config,
+            robot_ip=robot_ip,
+            initial_joint_deg=initial_joint,
+            visualize_placo=visual,
+            use_dh_gripper=True,
+            dh_gripper_port=DH_GRIPPER_PORT,
+            dh_gripper_force=DH_GRIPPER_FORCE,
+            dh_gripper_speed=DH_GRIPPER_SPEED,
+            dh_gripper_slave_id=DH_GRIPPER_SLAVE_ID,
+            dh_gripper_baudrate=DH_GRIPPER_BAUDRATE,
+        )
+        dh_gripper_connected = arm_controller.init_dh_gripper()
+        gripper_hint = (
+            f"Trigger ({controller_side}) controls DH gripper on {DH_GRIPPER_PORT} (proportional)."
+            if dh_gripper_connected
+            else "DH gripper not connected — arm-only teleop."
+        )
+        print(
+            f"Single-arm teleop: robot_ip={robot_ip}, controller_side={controller_side}. "
+            f"Hold grip to move the arm. {gripper_hint}"
+        )
+        arm_controller.calc_target_joint_position()
+
+        main_pipeline, pip_pipeline, main_sn, pip_sn = vr.init_pip_camera_pipelines(
+            capture_width, capture_height, fps, main_serial, pip_serial
+        )
+        pipelines = [main_pipeline, pip_pipeline]
+        get_frame, readers, pip_source = vr.make_frame_source(
+            main_pipeline,
+            pip_pipeline,
+            pip_scale,
+            pip_margin,
+            main_label=vr._device_label(main_sn),
+            pip_label=vr._device_label(pip_sn),
+        )
+        print("Waiting for first frames from both cameras...")
+        get_frame()
+        print("Both cameras producing frames.")
+        cameras_ready = True
+
+        before_frame = None
+        if pip_source is not None and not no_swap_on_a:
+            before_frame = vr.init_swap_on_xr_client(pip_source, xr_client, button=swap_button)
+
+        layout_desc = (
+            f"PiP main={main_sn} pip={pip_sn} scale={pip_scale} + "
+            f"SBS + letterbox (TV-style panel per eye)"
+        )
+        print(
+            f"Quality={quality}  capture {capture_width}x{capture_height} @ {fps}fps → "
+            f"encode {encode_width}x{encode_height}  bitrate={bitrate // 1_000_000}Mbps  ({layout_desc})"
+        )
+
+        arm_threads = _start_arm_threads(arm_controller, stop_signal)
+        codec = vr.create_h264_encoder(encode_width, encode_height, fps, bitrate, x264_preset)
+
+        try:
+            sock = vr.wait_for_headset_connection(
+                headset_ip, stream_port, pc_service_ip, timeout_s=connect_timeout
+            )
+        except ConnectionError as exc:
+            print(exc, file=sys.stderr)
+            cleanup_cameras()
+            cameras_ready = False
+            raise SystemExit(1) from exc
+
+        exit_code = vr.stream_to_vr(
+            sock=sock,
+            get_frame=get_frame,
+            readers=readers,
+            pipelines=pipelines,
+            codec=codec,
+            fps=fps,
+            stereo_sbs=stereo_sbs,
+            layout=layout,
+            preview=preview,
+            before_frame=before_frame,
+            on_stop=None,
+        )
+        cameras_ready = False
+        raise SystemExit(exit_code)
+
+    except RuntimeError as exc:
+        print(exc, file=sys.stderr)
+        if cameras_ready:
+            cleanup_cameras()
+        raise SystemExit(1) from exc
+    finally:
+        stop_signal.set()
+        for t in arm_threads:
+            t.join(timeout=3.0)
+        if cameras_ready:
+            cleanup_cameras()
+        if arm_controller is not None:
+            arm_controller.close()
+        xr_client.close()
+        print("Teleop and VR stream stopped.")
+
+
+if __name__ == "__main__":
+    tyro.cli(main)
