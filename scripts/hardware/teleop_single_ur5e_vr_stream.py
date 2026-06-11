@@ -19,7 +19,7 @@ Controls (default controller_side=right):
   - Trigger: DH gripper
   - A: swap main / PiP cameras
   - X: 开始/停止 BC 录制（停止后自动保存并回 Home）
-  - Y: 丢弃当前录制
+  - Y: 丢弃当前录制（并回 Home）
   - B (in ZEDMINI): 2D / stereo view toggle — not used for recording
 
 BC data collection (V1):

@@ -46,7 +46,7 @@ class BCEpisodeRecorder:
 
     手柄按键（VR）：
       X — 开始 / 停止当前局录制
-      Y — 丢弃本局（不保存）
+      Y — 丢弃本局（不保存，并回 Home）
 
     按 X 停止后自动保存（无交互确认）。Episode 原子写入
     ``{save_dir}/episode_{index:05d}.pkl``（绝对路径会打印到终端）。
@@ -176,6 +176,8 @@ class BCEpisodeRecorder:
         if y_pressed and not self._prev_y and self._is_recording:
             print("--- 已丢弃本局录制（Y）---")
             self._discard_episode(wait_encode=True)
+            if self.config.auto_reset_after_episode:
+                self._schedule_reset_to_home(after_discard=True)
 
         self._prev_x = x_pressed
         self._prev_y = y_pressed
@@ -237,12 +239,15 @@ class BCEpisodeRecorder:
             self._frame_index = 0
             self._episode_start_time = None
 
-    def _schedule_reset_to_home(self) -> None:
+    def _schedule_reset_to_home(self, *, after_discard: bool = False) -> None:
         """后台回 Home，不阻塞采样线程按键检测。"""
 
         def _run() -> None:
             try:
-                print("录制已保存，正在回 Home...")
+                if after_discard:
+                    print("本局已丢弃，正在回 Home...")
+                else:
+                    print("录制已保存，正在回 Home...")
                 self.arm_controller.reset_to_home()
                 print("已回到 Home，可摆放积木并按 X 开始下一局。")
             except Exception as exc:
