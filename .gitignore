@@ -67,6 +67,7 @@ htmlcov/
 *.csv
 data/
 !data/.gitkeep
+datasets/
 
 # Environment
 .env
