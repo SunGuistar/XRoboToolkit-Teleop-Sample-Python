@@ -35,6 +35,9 @@ from xrobotoolkit_teleop.utils.geometry import (
 from xrobotoolkit_teleop.utils.parallel_gripper_utils import (
     calc_parallel_gripper_position,
 )
+from xrobotoolkit_teleop.bc.config import BCConfig
+from xrobotoolkit_teleop.bc.gripper_norm import trigger_to_gripper_cmd
+from xrobotoolkit_teleop.bc.policy import BCPolicy, apply_policy_action
 from xrobotoolkit_teleop.utils.path_utils import ASSET_PATH
 
 DEFAULT_SINGLE_ARM_URDF_PATH = os.path.join(ASSET_PATH, "universal_robots_ur5e/ur5e.urdf")
@@ -88,6 +91,8 @@ class SingleArmURController:
         dh_gripper_slave_id: int = 1,
         dh_gripper_baudrate: int = 115200,
         dh_gripper_standard_position: bool = False,
+        policy_mode: bool = False,
+        bc_config: BCConfig | None = None,
     ):
         self.xr_client = xr_client
         self.robot_urdf_path = robot_urdf_path
@@ -159,6 +164,14 @@ class SingleArmURController:
         self.control_active = False
         self._servo_engaged = False
         self._pending_gripper_trigger: float = 0.0
+
+        # BC deployment hooks (V1: recording uses sample_bc_frame; policy optional)
+        self.policy_mode = policy_mode
+        self.bc_config = bc_config or BCConfig()
+        self.policy: BCPolicy | None = None
+        self._policy_image: np.ndarray | None = None
+        self._policy_image_lock = threading.Lock()
+        self._reset_in_progress = False
         for name, config in self.manipulator_config.items():
             self.effector_task[name].T_world_frame = self.placo_robot.get_T_world_frame(config["link_name"])
 
@@ -208,17 +221,89 @@ class SingleArmURController:
             delta_rot = quat_diff_as_angle_axis(self.init_controller_quat[arm_name], controller_quat)
         return delta_xyz, delta_rot
 
+    def set_policy(self, policy: BCPolicy | None) -> None:
+        """Attach a BC policy for deployment (policy_mode must be True)."""
+        self.policy = policy
+
+    def set_policy_image(self, image_bgr: np.ndarray) -> None:
+        """Update the latest main-camera frame for policy inference."""
+        with self._policy_image_lock:
+            self._policy_image = image_bgr.copy()
+
+    def get_gripper_cmd_normalized(self) -> float:
+        """VR trigger as gripper_cmd. 0=open, 1=close."""
+        config = self.manipulator_config[self.arm_name]
+        trigger_val = self.xr_client.get_key_value_by_name(config["gripper_trigger"])
+        return trigger_to_gripper_cmd(trigger_val)
+
+    def get_gripper_state_normalized(self) -> float:
+        """Estimated gripper opening. 0=open, 1=close."""
+        if self.dh_gripper is not None:
+            return self.dh_gripper.get_normalized_state()
+        if self.use_gripper and self.robot_controller.gripper is not None:
+            open_pos = self.robot_controller.gripper.get_open_position()
+            closed_pos = self.robot_controller.gripper.get_closed_position()
+            from xrobotoolkit_teleop.bc.gripper_norm import register_to_normalized
+
+            return register_to_normalized(self.gripper_pos, open_pos, closed_pos)
+        return self.get_gripper_cmd_normalized()
+
+    def get_observation_state(self) -> np.ndarray:
+        """BC observation.state = [qpos(6), gripper_state(1)]. 0=open, 1=close."""
+        qpos = self.robot_controller.get_current_joint_positions()
+        gripper_state = self.get_gripper_state_normalized()
+        return np.concatenate([qpos, [gripper_state]]).astype(np.float64)
+
+    def sample_bc_frame(self) -> dict:
+        """Sample robot fields for BC recording (no image)."""
+        with self._control_lock:
+            target_q = self.target_q.copy()
+            control_active = self.control_active
+        return {
+            "qpos": self.robot_controller.get_current_joint_positions().astype(np.float64),
+            "target_q": target_q.astype(np.float64),
+            "gripper_state": self.get_gripper_state_normalized(),
+            "gripper_cmd": self.get_gripper_cmd_normalized(),
+            "control_active": control_active,
+        }
+
+    def _run_policy_step(self, current_q: np.ndarray) -> bool:
+        """Policy → target_q when policy_mode and human grip is not active."""
+        if self.policy is None:
+            return False
+        with self._policy_image_lock:
+            image = None if self._policy_image is None else self._policy_image.copy()
+        if image is None:
+            return False
+
+        obs = {
+            "observation.images.main": image,
+            "observation.state": self.get_observation_state(),
+        }
+        action = self.policy.predict(obs)
+        target_q, gripper_cmd = apply_policy_action(
+            action,
+            current_q,
+            max_delta_q=self.bc_config.max_delta_q,
+            joint_limits_lower=self.bc_config.joint_limits_lower,
+            joint_limits_upper=self.bc_config.joint_limits_upper,
+        )
+        with self._control_lock:
+            self.target_q = target_q
+        self._pending_gripper_trigger = gripper_cmd
+        return True
+
     def calc_target_joint_position(self):
         """Calculate target joint positions from PICO controller pose and grip input."""
         current_q = self.robot_controller.get_current_joint_positions()
         self.placo_robot.state.q[PLACO_ARM_Q_SLICE] = current_q
         self.placo_robot.update_kinematics()
 
-        control_active = False
+        human_control_active = False
         for name, config in self.manipulator_config.items():
             xr_grip_val = self.xr_client.get_key_value_by_name(config["control_trigger"])
             active = xr_grip_val > (1.0 - CONTROLLER_DEADZONE)
-            control_active = control_active or active
+            human_control_active = human_control_active or active
             if self.use_gripper:
                 trigger_val = self.xr_client.get_key_value_by_name(config["gripper_trigger"])
                 self.gripper_pos = int(
@@ -228,7 +313,8 @@ class SingleArmURController:
                         trigger_val,
                     )
                 )
-            elif self.use_dh_gripper:
+            elif self.use_dh_gripper and (active or not self.policy_mode):
+                # In policy_mode, gripper_cmd comes from policy unless human has grip active.
                 self._pending_gripper_trigger = self.xr_client.get_key_value_by_name(config["gripper_trigger"])
 
             if active:
@@ -266,9 +352,14 @@ class SingleArmURController:
                 self.effector_task[name].T_world_frame = T_world_ee_current
 
         with self._control_lock:
-            self.control_active = control_active
+            self.control_active = human_control_active
 
-        if not control_active:
+        # Human grip always wins over policy (safety / takeover).
+        if not human_control_active and self.policy_mode:
+            if self._run_policy_step(current_q):
+                return
+
+        if not human_control_active:
             with self._control_lock:
                 self.target_q = current_q.copy()
             return
@@ -317,6 +408,42 @@ class SingleArmURController:
     def reset(self):
         self.robot_controller.reset()
 
+    def reset_to_home(self, open_gripper: bool = True) -> None:
+        """Stop servoJ, moveJ to home, sync teleop state. Safe to call during teleop."""
+        with self._control_lock:
+            self._reset_in_progress = True
+
+        try:
+            if self._servo_engaged:
+                self.robot_controller.servo_stop()
+                self._servo_engaged = False
+
+            self.robot_controller.reset()
+            q_home = self.robot_controller.initial_joint_positions.copy()
+
+            if open_gripper:
+                if self.dh_gripper is not None:
+                    self.dh_gripper.open_gripper()
+                    self._pending_gripper_trigger = 0.0
+                elif self.use_gripper and self.robot_controller.gripper is not None:
+                    self.robot_controller.open_gripper()
+
+            with self._control_lock:
+                self.target_q = q_home.copy()
+                self.control_active = False
+            self.placo_robot.state.q[PLACO_ARM_Q_SLICE] = q_home
+            self.placo_robot.update_kinematics()
+
+            for name, config in self.manipulator_config.items():
+                self.init_ee_xyz[name] = None
+                self.init_ee_quat[name] = None
+                self.init_controller_xyz[name] = None
+                self.init_controller_quat[name] = None
+                self.effector_task[name].T_world_frame = self.placo_robot.get_T_world_frame(config["link_name"])
+        finally:
+            with self._control_lock:
+                self._reset_in_progress = False
+
     def close(self):
         if self.dh_gripper is not None:
             self.dh_gripper.disconnect()
@@ -333,6 +460,9 @@ class SingleArmURController:
         servo_fail_reported = False
         while not stop_event.is_set():
             with self._control_lock:
+                if self._reset_in_progress:
+                    time.sleep(0.02)
+                    continue
                 q_cmd = self.target_q.copy()
 
             ok = self.robot_controller.servo_joints(q_cmd)

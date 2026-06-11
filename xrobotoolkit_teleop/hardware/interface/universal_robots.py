@@ -18,6 +18,8 @@ LOOKAHEAD_TIME = 0.1
 SERVO_GAIN = 300.0
 MAX_VELOCITY = 0.5
 MAX_ACCELERATION = 1.0
+DEFAULT_MOVEL_SPEED = 0.05
+DEFAULT_MOVEL_ACCELERATION = 0.2
 
 GRIPPER_FORCE = 128
 GRIPPER_SPEED = 255
@@ -164,6 +166,17 @@ class URController:
                 self.rtde_c.servoStop()
             except Exception:
                 pass
+
+    def move_l(
+        self,
+        tcp_pose: np.ndarray,
+        velocity: float = DEFAULT_MOVEL_SPEED,
+        acceleration: float = DEFAULT_MOVEL_ACCELERATION,
+        asynchronous: bool = False,
+    ) -> bool:
+        """直线运动到 TCP 位姿 [x,y,z,rx,ry,rz]（米、弧度）。"""
+        pose = np.asarray(tcp_pose, dtype=np.float64).reshape(6)
+        return bool(self.rtde_c.moveL(pose.tolist(), velocity, acceleration, asynchronous))
 
     def open_gripper(self):
         if not self.use_gripper:

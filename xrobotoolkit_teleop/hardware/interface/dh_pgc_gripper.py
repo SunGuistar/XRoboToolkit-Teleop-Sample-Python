@@ -70,6 +70,22 @@ class DHPGCGripperTeleopInterface:
             )
         )
 
+    def get_normalized_state(self) -> float:
+        """Last commanded register position mapped to [0, 1]. 0=open, 1=close."""
+        from xrobotoolkit_teleop.bc.gripper_norm import register_to_normalized
+
+        with self._lock:
+            if self._last_target is None:
+                return 0.0
+            return register_to_normalized(self._last_target, self._register_open, self._register_closed)
+
+    def open_gripper(self) -> None:
+        """Open fingers (0=open in BC convention)."""
+        with self._lock:
+            self._gripper.set_position(self._register_open, wait=False, verify=False)
+            self._last_target = self._register_open
+            self._last_send_time = time.monotonic()
+
     def update_from_trigger(self, trigger_val: float) -> None:
         """Send position command when trigger or rate limit warrants an update."""
         target = self.target_position_from_trigger(trigger_val)

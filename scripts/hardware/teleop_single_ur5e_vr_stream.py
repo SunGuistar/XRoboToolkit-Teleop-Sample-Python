@@ -15,12 +15,25 @@ Typical usage (lab defaults):
   python scripts/hardware/teleop_single_ur5e_vr_stream.py --debug
 
 Controls (default controller_side=right):
-  - Hold grip: move arm
+  - Hold grip: move arm (human takeover always wins over policy)
   - Trigger: DH gripper
   - A: swap main / PiP cameras
-  - B (in ZEDMINI): 2D / stereo view toggle
+  - X: 开始/停止 BC 录制（停止后自动保存并回 Home）
+  - Y: 丢弃当前录制
+  - B (in ZEDMINI): 2D / stereo view toggle — not used for recording
 
-Order: script starts → camera warmup → arm threads → wait for PICO Listen → stream.
+BC data collection (V1):
+  - Independent 10Hz logging thread (not tied to VR stream loop)
+  - Training image: main camera only (pip optional, off by default)
+  - Raw episodes: logs/ur5e_bc/raw/episode_XXXXX.pkl
+
+  observation.state = [qpos(6), gripper_state(1)]   — 0=open, 1=close
+  action            = [target_q(6), gripper_cmd(1)] — 0=open, 1=close
+
+  Check episode:  python scripts/check_ur5e_bc_episode.py logs/ur5e_bc/raw/episode_00000.pkl
+  Convert LeRobot: python scripts/convert_ur5e_raw_to_lerobot.py --raw-dir logs/ur5e_bc/raw
+
+Order: script starts → camera warmup → arm threads → BC recorder → wait for PICO Listen → stream.
 """
 
 from __future__ import annotations
@@ -36,6 +49,8 @@ from typing import Literal
 import numpy as np
 import tyro
 
+from xrobotoolkit_teleop.bc.config import BCConfig
+from xrobotoolkit_teleop.bc.recorder import BCEpisodeRecorder
 from xrobotoolkit_teleop.shared_autonomy.alignment import AlignmentVisionRenderer
 from xrobotoolkit_teleop.shared_autonomy.config import COLOR_HSV_PRESETS, TargetDetectionConfig
 from xrobotoolkit_teleop.shared_autonomy.gripper_color_config import GripperColorConfig
@@ -157,6 +172,13 @@ def main(
     layout: Literal["sbs", "screen"] = "screen",
     fps: int = 30,
     debug: bool = False,
+    enable_recording: bool = True,
+    record_fps: float = 10.0,
+    record_save_dir: str = "logs/ur5e_bc/raw",
+    record_image_format: Literal["jpeg", "raw"] = "jpeg",
+    record_save_pip: bool = False,
+    record_auto_reset: bool = True,
+    policy_mode: bool = False,
 ) -> None:
     if controller_side == "left":
         manipulator_config = LEFT_CONTROLLER_MANIPULATOR_CONFIG
@@ -194,11 +216,19 @@ def main(
 
     xr_client = XrClient()
     arm_controller: SingleArmURController | None = None
+    bc_recorder: BCEpisodeRecorder | None = None
     stop_signal = threading.Event()
     arm_threads: list[threading.Thread] = []
     pipelines: list = []
     readers: list = []
     cameras_ready = False
+    bc_config = BCConfig(
+        record_fps=record_fps,
+        save_dir=Path(record_save_dir),
+        image_format=record_image_format,
+        save_optional_pip_image=record_save_pip,
+        auto_reset_after_episode=record_auto_reset,
+    )
 
     def cleanup_cameras() -> None:
         for reader in readers:
@@ -222,7 +252,11 @@ def main(
             dh_gripper_speed=DH_GRIPPER_SPEED,
             dh_gripper_slave_id=DH_GRIPPER_SLAVE_ID,
             dh_gripper_baudrate=DH_GRIPPER_BAUDRATE,
+            policy_mode=policy_mode,
+            bc_config=bc_config,
         )
+        if policy_mode:
+            print("policy_mode=True: attach a policy via arm_controller.set_policy() before teleop.")
         dh_gripper_connected = arm_controller.init_dh_gripper()
         gripper_hint = (
             f"Trigger ({controller_side}) controls DH gripper on {DH_GRIPPER_PORT} (proportional)."
@@ -275,6 +309,18 @@ def main(
         )
 
         arm_threads = _start_arm_threads(arm_controller, stop_signal)
+
+        if enable_recording:
+            pip_reader = readers[1] if len(readers) > 1 else None
+            bc_recorder = BCEpisodeRecorder(
+                xr_client=xr_client,
+                arm_controller=arm_controller,
+                main_reader=readers[0],
+                pip_reader=pip_reader,
+                config=bc_config,
+            )
+            bc_recorder.start(stop_signal)
+
         codec = vr.create_h264_encoder(encode_width, encode_height, fps, bitrate, x264_preset)
 
         try:
@@ -310,6 +356,8 @@ def main(
         raise SystemExit(1) from exc
     finally:
         stop_signal.set()
+        if bc_recorder is not None:
+            bc_recorder.stop()
         for t in arm_threads:
             t.join(timeout=3.0)
         if cameras_ready:
