@@ -27,6 +27,8 @@ class BCConfig:
     save_dir: Path = field(default_factory=lambda: Path("logs/ur5e_bc/raw"))
     image_format: str = "jpeg"  # "jpeg" or "raw"
     jpeg_quality: int = 85
+    # 录制前缩小主相机图像（1.0=原图）。缩小可减轻 copy/JPEG CPU，缓解采样线程饥饿。
+    record_image_scale: float = 1.0
     encode_queue_maxsize: int = 128  # 0=无限；满时采样线程丢帧并告警
     auto_reset_after_episode: bool = True  # 保存 episode 后自动 moveJ 回 Home
     default_episode_success: bool = True  # 自动保存时 metadata.success 默认值

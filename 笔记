@@ -1,0 +1,17 @@
+机械臂+夹爪+双双摄像头+数据可采集：
+python scripts/hardware/teleop_single_ur5e_vr_stream.py
+重置：--reset
+可视化：--visual
+
+
+PC检查摄像头
+python scripts/visualization/rs_cam_streaming.py
+
+
+修改home: 
+xrobotoolkit_teleop/hardware/interface/universal_robots.py 
+
+数据采集目录：logs
+Lerobot数据集目录：train
+
+训练：

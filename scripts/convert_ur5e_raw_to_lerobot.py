@@ -195,8 +195,6 @@ def convert_episodes(
                 "action": action,
                 "task": metadata.get("task", task),
             }
-            if "timestamp" in frame:
-                lerobot_frame["timestamp"] = float(frame["timestamp"])
 
             dataset.add_frame(lerobot_frame)
 
@@ -223,7 +221,12 @@ def main() -> None:
     parser.add_argument("--raw-dir", type=Path, default=Path("logs/ur5e_bc/raw"))
     parser.add_argument("--output-dir", type=Path, default=Path("datasets/ur5e_block_pick"))
     parser.add_argument("--repo-id", type=str, default=BCConfig().lerobot_repo_id)
-    parser.add_argument("--fps", type=int, default=10)
+    parser.add_argument(
+        "--fps",
+        type=int,
+        default=7,
+        help="LeRobot 数据集 fps（建议与实测采样率一致，当前 raw 数据约 7Hz）",
+    )
     parser.add_argument("--task", type=str, default=DEFAULT_TASK)
     parser.add_argument("--robot-type", type=str, default="ur5e")
     parser.add_argument(

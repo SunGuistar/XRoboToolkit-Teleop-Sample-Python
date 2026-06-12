@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+import cv2
 import numpy as np
 
 from xrobotoolkit_teleop.bc.config import BCConfig
@@ -123,15 +124,20 @@ class BCEpisodeRecorder:
 
     def _sample_loop(self) -> None:
         interval = 1.0 / self.config.record_fps
+        next_tick = time.perf_counter()
         while not self._stop_event.is_set():
-            t0 = time.perf_counter()
             self._poll_buttons()
             if self._is_recording:
-                self._enqueue_raw_sample()
-            elapsed = time.perf_counter() - t0
-            sleep_s = interval - elapsed
-            if sleep_s > 0:
-                time.sleep(sleep_s)
+                now = time.perf_counter()
+                if now >= next_tick:
+                    self._enqueue_raw_sample()
+                    next_tick += interval
+                    # 严重落后时重新对齐，避免 CPU 饥饿后连续 burst 两帧。
+                    if time.perf_counter() - next_tick > interval:
+                        next_tick = time.perf_counter() + interval
+            delay = next_tick - time.perf_counter()
+            if delay > 0:
+                time.sleep(delay)
         print("BC 采样线程已停止。")
 
     def _encode_loop(self) -> None:
@@ -255,6 +261,18 @@ class BCEpisodeRecorder:
 
         threading.Thread(target=_run, name="bc-reset", daemon=True).start()
 
+    def _prepare_record_image(self, image_bgr: np.ndarray) -> np.ndarray:
+        """get_latest 已返回 copy；可选缩小以减轻编码/CPU 压力。"""
+        scale = self.config.record_image_scale
+        if scale >= 0.999:
+            return image_bgr
+        if scale <= 0.1:
+            raise ValueError("record_image_scale must be in (0.1, 1.0].")
+        h, w = image_bgr.shape[:2]
+        new_w = max(1, int(w * scale))
+        new_h = max(1, int(h * scale))
+        return cv2.resize(image_bgr, (new_w, new_h), interpolation=cv2.INTER_AREA)
+
     def _enqueue_raw_sample(self) -> None:
         try:
             image_main = self.main_reader.get_latest(timeout_s=0.2)
@@ -265,7 +283,7 @@ class BCEpisodeRecorder:
         image_pip = None
         if self.config.save_optional_pip_image and self.pip_reader is not None:
             try:
-                image_pip = self.pip_reader.get_latest(timeout_s=0.1)
+                image_pip = self._prepare_record_image(self.pip_reader.get_latest(timeout_s=0.1))
             except RuntimeError:
                 pass
 
@@ -279,8 +297,8 @@ class BCEpisodeRecorder:
             timestamp=time.time() - self._session_start_time,
             frame_index=frame_index,
             episode_index=episode_index,
-            image_main_bgr=image_main.copy(),
-            image_pip_bgr=image_pip.copy() if image_pip is not None else None,
+            image_main_bgr=self._prepare_record_image(image_main),
+            image_pip_bgr=image_pip,
             qpos=sample["qpos"],
             target_q=sample["target_q"],
             gripper_state=sample["gripper_state"],
