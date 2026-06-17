@@ -8,7 +8,7 @@ Typical usage (lab defaults):
   python scripts/hardware/teleop_single_ur5e_vr_stream.py
 
   python scripts/hardware/teleop_single_ur5e_vr_stream.py \\
-    --main-serial 406122070449 --pip-serial 148522072134 \\
+    --main-serial 406122070449 --pip-serial 152122074297 \\
     --quality balanced --pip-scale 0.38
 
   # VR 右下角 PiP 显示对准调试叠加（与 debug_alignment_vision.py 相同）
@@ -83,7 +83,7 @@ DH_GRIPPER_SLAVE_ID = 1
 DH_GRIPPER_BAUDRATE = 115200
 
 DEFAULT_MAIN_SERIAL = "406122070449"
-DEFAULT_PIP_SERIAL = "148522072134"
+DEFAULT_PIP_SERIAL = "152122074297"
 
 
 def _run_reset(robot_ip: str, initial_joint: np.ndarray) -> None:
