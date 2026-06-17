@@ -32,7 +32,7 @@ class BCConfig:
     encode_queue_maxsize: int = 128  # 0=无限；满时采样线程丢帧并告警
     auto_reset_after_episode: bool = True  # 保存 episode 后自动 moveJ 回 Home
     default_episode_success: bool = True  # 自动保存时 metadata.success 默认值
-    save_optional_pip_image: bool = False
+    save_optional_pip_image: bool = True
     task: str = DEFAULT_TASK
     schema_version: int = 1
 

@@ -24,7 +24,7 @@ Controls (default controller_side=right):
 
 BC data collection (V1):
   - Independent 10Hz logging thread (not tied to VR stream loop)
-  - Training image: main camera only (pip optional, off by default)
+  - Training images: main + pip cameras (disable pip with --no-record-save-pip)
   - Raw episodes: logs/ur5e_bc/raw/episode_XXXXX.pkl
 
   observation.state = [qpos(6), gripper_state(1)]   — 0=open, 1=close
@@ -176,7 +176,7 @@ def main(
     record_fps: float = 10.0,
     record_save_dir: str = "logs/ur5e_bc/raw",
     record_image_format: Literal["jpeg", "raw"] = "jpeg",
-    record_save_pip: bool = False,
+    record_save_pip: bool = True,
     record_auto_reset: bool = True,
     policy_mode: bool = False,
 ) -> None:
