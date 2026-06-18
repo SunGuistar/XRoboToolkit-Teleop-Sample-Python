@@ -7,9 +7,8 @@ in separate terminals breaks A-button swap or arm tracking. This script shares o
 Typical usage (lab defaults):
   python scripts/hardware/teleop_single_ur5e_vr_stream.py
 
-  python scripts/hardware/teleop_single_ur5e_vr_stream.py \\
-    --main-serial 406122070449 --pip-serial 152122074297 \\
-    --quality balanced --pip-scale 0.38
+  # Higher resolution (auto-clamps fps for D435 + D435I dual setup):
+  python scripts/hardware/teleop_single_ur5e_vr_stream.py --quality balanced
 
   # VR 右下角 PiP 显示对准调试叠加（与 debug_alignment_vision.py 相同）
   python scripts/hardware/teleop_single_ur5e_vr_stream.py --debug
@@ -159,13 +158,13 @@ def main(
     initial_joint_deg: tuple[float, float, float, float, float, float] | None = None,
     main_serial: str = DEFAULT_MAIN_SERIAL,
     pip_serial: str = DEFAULT_PIP_SERIAL,
-    quality: Literal["low", "balanced", "high"] = "balanced",
+    quality: Literal["low", "balanced", "high"] = "low",
     pip_scale: float = 0.28,
     pip_margin: int = 16,
     swap_button: Literal["A", "B", "X", "Y"] = "A",
     no_swap_on_a: bool = False,
-    headset_ip: str = "192.168.3.198",
-    pc_service_ip: str = "192.168.181.64",
+    headset_ip: str = "192.168.88.129",
+    pc_service_ip: str = "192.168.88.57",
     stream_port: int = 12345,
     connect_timeout: float = 120.0,
     preview: bool = False,
@@ -209,8 +208,6 @@ def main(
     bitrate = preset["bitrate"]
     x264_preset = preset["preset"]
     stereo_sbs = True
-    encode_width = capture_width * 2
-    encode_height = capture_height
 
     vr.print_usb_pico_hint(pc_service_ip, headset_ip, stream_port)
 
@@ -269,9 +266,11 @@ def main(
         )
         arm_controller.calc_target_joint_position()
 
-        main_pipeline, pip_pipeline, main_sn, pip_sn = vr.init_pip_camera_pipelines(
-            capture_width, capture_height, fps, main_serial, pip_serial
+        main_pipeline, pip_pipeline, main_sn, pip_sn, capture_width, capture_height, fps = (
+            vr.init_pip_camera_pipelines(capture_width, capture_height, fps, main_serial, pip_serial)
         )
+        encode_width = capture_width * 2
+        encode_height = capture_height
         pipelines = [main_pipeline, pip_pipeline]
         get_frame, readers, pip_source = vr.make_frame_source(
             main_pipeline,

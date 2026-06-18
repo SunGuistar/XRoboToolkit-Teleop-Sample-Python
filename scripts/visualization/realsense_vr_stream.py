@@ -4,16 +4,16 @@
 Protocol: TCP, 4-byte big-endian length + H.264 Annex-B NALU (same as RobotVisionConsole).
 
 USB PICO (typical):
-  - Headset IP: 192.168.3.198  (opens port 12345 only while Listen is active)
-  - PC / PC-Service IP: 192.168.181.64  (enter as "camera IP" on the headset)
+  - Headset IP: 192.168.88.129  (opens port 12345 only while Listen is active)
+  - PC / PC-Service IP: 192.168.88.57  (enter as "camera IP" on the headset)
 
   Order matters — do NOT tap Listen first (it times out during camera warmup):
   1. PC: python scripts/visualization/realsense_vr_stream.py
      (defaults: USB headset IP, layout=screen, quality=high)
   2. When the terminal shows "waiting for Listen", on PICO: ZEDMINI → Listen,
-     camera IP = 192.168.181.64
+     camera IP = 192.168.88.57
 
-Wi‑Fi PICO: use --ip <headset Wi‑Fi IP> instead of 192.168.3.198.
+Wi‑Fi PICO: use --ip <headset Wi‑Fi IP> instead of 192.168.88.129.
 
 Fallback server mode (rare): --mode server
 
@@ -394,6 +394,72 @@ def accept_tcp_server(bind_host: str, port: int) -> socket.socket:
     return conn
 
 
+def _color_bgr8_profiles(serial: str) -> set[tuple[int, int, int]]:
+    """Return supported (width, height, fps) tuples for a camera's BGR8 color stream."""
+    profiles: set[tuple[int, int, int]] = set()
+    for dev in rs.context().query_devices():
+        if dev.get_info(rs.camera_info.serial_number) != serial:
+            continue
+        for sensor in dev.query_sensors():
+            for profile in sensor.get_stream_profiles():
+                if profile.stream_type() != rs.stream.color or profile.format() != rs.format.bgr8:
+                    continue
+                vp = profile.as_video_stream_profile()
+                profiles.add((vp.width(), vp.height(), vp.fps()))
+        return profiles
+    return set()
+
+
+def resolve_dual_color_stream(
+    serials: list[str],
+    width: int,
+    height: int,
+    fps: int,
+) -> tuple[int, int, int]:
+    """Pick color stream settings supported by all listed cameras."""
+    device_profiles = [_color_bgr8_profiles(serial) for serial in serials]
+    for serial, profiles in zip(serials, device_profiles):
+        if not profiles:
+            raise RuntimeError(f"RealSense serial {serial} not found.")
+
+    requested = (width, height, fps)
+    if all(requested in profiles for profiles in device_profiles):
+        return width, height, fps
+
+    common_fps_at_res = sorted(
+        {
+            profile_fps
+            for profile_fps in {p[2] for p in device_profiles[0] if (p[0], p[1]) == (width, height)}
+            if all((width, height, profile_fps) in profiles for profiles in device_profiles)
+        },
+        reverse=True,
+    )
+    usable_fps = [profile_fps for profile_fps in common_fps_at_res if profile_fps <= fps]
+    if usable_fps:
+        resolved_fps = usable_fps[0]
+        if (width, height, resolved_fps) != requested:
+            labels = ", ".join(serials)
+            print(
+                f"Dual RealSense ({labels}): {width}x{height}@{fps}fps unavailable; "
+                f"using {width}x{height}@{resolved_fps}fps."
+            )
+        return width, height, resolved_fps
+
+    for fallback in ((640, 480, 30), (640, 480, 15), (424, 240, 30)):
+        if all(fallback in profiles for profiles in device_profiles):
+            if fallback != requested:
+                labels = ", ".join(serials)
+                print(
+                    f"Dual RealSense ({labels}): {width}x{height}@{fps}fps unavailable; "
+                    f"falling back to {fallback[0]}x{fallback[1]}@{fallback[2]}fps."
+                )
+            return fallback
+
+    raise RuntimeError(
+        f"No common RealSense color stream for serials {serials} (requested {width}x{height}@{fps}fps)."
+    )
+
+
 def warmup_camera(
     serial: str | None,
     capture_width: int,
@@ -405,7 +471,13 @@ def warmup_camera(
     if serial:
         config.enable_device(serial)
     config.enable_stream(rs.stream.color, capture_width, capture_height, rs.format.bgr8, fps)
-    pipeline.start(config)
+    try:
+        pipeline.start(config)
+    except RuntimeError as exc:
+        label = serial or "default"
+        raise RuntimeError(
+            f"RealSense {label} failed to start ({capture_width}x{capture_height} @ {fps}fps): {exc}"
+        ) from exc
     for _ in range(5):
         pipeline.wait_for_frames()
     return pipeline, config
@@ -565,17 +637,20 @@ def init_pip_camera_pipelines(
     fps: int,
     main_serial: str,
     pip_serial: str,
-) -> tuple[rs.pipeline, rs.pipeline, str, str]:
+) -> tuple[rs.pipeline, rs.pipeline, str, str, int, int, int]:
     devices = _print_devices()
     _validate_serial(main_serial, devices, "Main")
     _validate_serial(pip_serial, devices, "PiP")
     if main_serial == pip_serial:
         raise RuntimeError("Main and PiP serial numbers must be different.")
 
+    capture_width, capture_height, fps = resolve_dual_color_stream(
+        [main_serial, pip_serial], capture_width, capture_height, fps
+    )
     print("Warming up dual RealSense cameras (before connecting to headset)...")
     main_pipeline, _ = warmup_camera(main_serial, capture_width, capture_height, fps)
     pip_pipeline, _ = warmup_camera(pip_serial, capture_width, capture_height, fps)
-    return main_pipeline, pip_pipeline, main_serial, pip_serial
+    return main_pipeline, pip_pipeline, main_serial, pip_serial, capture_width, capture_height, fps
 
 
 def make_frame_source(
@@ -725,13 +800,13 @@ def main() -> int:
     parser.add_argument(
         "--ip",
         type=str,
-        default="192.168.3.198",
-        help="Headset IP (USB default: 192.168.3.198)",
+        default="192.168.88.129",
+        help="Headset IP (USB default: 192.168.88.129)",
     )
     parser.add_argument(
         "--pc-service-ip",
         type=str,
-        default="192.168.181.64",
+        default="192.168.88.57",
         help="Shown on headset as camera/PC-Service IP (for your reference only)",
     )
     parser.add_argument("--bind", type=str, default="0.0.0.0", help="Listen address for server mode")
@@ -835,10 +910,15 @@ def main() -> int:
     before_frame: Callable[[], bool] | None = None
     on_stop: Callable[[], None] | None = None
     try:
+        stream_fps = args.fps
         if pip_mode:
-            main_pipeline, pip_pipeline, main_sn, pip_sn = init_pip_camera_pipelines(
-                capture_width, capture_height, args.fps, args.main_serial, args.pip_serial
+            main_pipeline, pip_pipeline, main_sn, pip_sn, capture_width, capture_height, stream_fps = (
+                init_pip_camera_pipelines(
+                    capture_width, capture_height, args.fps, args.main_serial, args.pip_serial
+                )
             )
+            encode_width = capture_width * 2 if stereo_sbs else capture_width
+            encode_height = capture_height
             pipelines = [main_pipeline, pip_pipeline]
             get_frame, readers, pip_source = make_frame_source(
                 main_pipeline,
@@ -883,10 +963,10 @@ def main() -> int:
     if pip_mode:
         layout_desc = f"PiP main={main_sn} pip={pip_sn} scale={args.pip_scale} + {layout_desc}"
     print(
-        f"Quality={args.quality}  capture {capture_width}x{capture_height} @ {args.fps}fps → "
+        f"Quality={args.quality}  capture {capture_width}x{capture_height} @ {stream_fps}fps → "
         f"encode {encode_width}x{encode_height}  bitrate={bitrate // 1_000_000}Mbps  ({layout_desc})"
     )
-    codec = create_h264_encoder(encode_width, encode_height, args.fps, bitrate, x264_preset)
+    codec = create_h264_encoder(encode_width, encode_height, stream_fps, bitrate, x264_preset)
 
     try:
         if args.mode == "client":
@@ -909,7 +989,7 @@ def main() -> int:
         readers=readers,
         pipelines=pipelines,
         codec=codec,
-        fps=args.fps,
+        fps=stream_fps,
         stereo_sbs=stereo_sbs,
         layout=args.layout,
         preview=args.preview,
