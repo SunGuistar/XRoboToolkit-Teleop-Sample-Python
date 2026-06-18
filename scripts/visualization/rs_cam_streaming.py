@@ -17,7 +17,7 @@ def main():
                 frames_dict = camera_interface.get_frames()
 
                 for serial, frames in frames_dict.items():
-                    color_image = frames["color"]
+                    color_image = cv2.cvtColor(frames["color"], cv2.COLOR_RGB2BGR)
                     depth_image = frames["depth"]
 
                     depth_colormap = cv2.applyColorMap(cv2.convertScaleAbs(depth_image, alpha=0.03), cv2.COLORMAP_JET)
