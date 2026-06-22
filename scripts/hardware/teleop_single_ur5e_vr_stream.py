@@ -188,6 +188,7 @@ def main(
     no_swap_on_a: bool = False,
     headset_ip: str = "192.168.88.129",
     pc_service_ip: str = "192.168.88.57",
+    auto_usb_ip: bool = True,
     stream_port: int = 12345,
     connect_timeout: float = 120.0,
     preview: bool = False,
@@ -232,6 +233,9 @@ def main(
     x264_preset = preset["preset"]
     stereo_sbs = True
 
+    headset_ip, pc_service_ip, headset_candidates = vr.resolve_vr_usb_ips(
+        headset_ip, pc_service_ip, auto_usb_ip=auto_usb_ip
+    )
     vr.print_usb_pico_hint(pc_service_ip, headset_ip, stream_port)
 
     xr_client = XrClient()
@@ -345,10 +349,18 @@ def main(
 
         codec = vr.create_h264_encoder(encode_width, encode_height, fps, bitrate, x264_preset)
         prefetch_frame = get_frame()
+        bootstrap_packets = vr.build_bootstrap_packets(
+            codec, prefetch_frame, stereo_sbs, layout, get_frame=get_frame
+        )
+        print(f"Pre-encoded {len(bootstrap_packets)} H.264 packet(s) ready for instant stream start.")
 
         try:
             sock = vr.wait_for_headset_connection(
-                headset_ip, stream_port, pc_service_ip, timeout_s=connect_timeout
+                headset_ip,
+                stream_port,
+                pc_service_ip,
+                timeout_s=connect_timeout,
+                host_candidates=headset_candidates,
             )
         except ConnectionError as exc:
             print(f"VR connect timeout (teleop continues): {exc}", file=sys.stderr)
@@ -368,6 +380,7 @@ def main(
             before_frame=before_frame,
             on_stop=None,
             first_frame=prefetch_frame,
+            bootstrap_packets=bootstrap_packets,
             manage_cameras=False,
         )
         if exit_code != 0:

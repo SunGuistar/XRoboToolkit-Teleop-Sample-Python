@@ -80,17 +80,18 @@ def get_network_interfaces() -> list[tuple[str, str, str]]:
     try:
         out = subprocess.check_output(["ip", "-4", "-o", "addr", "show"], text=True)
         for line in out.splitlines():
-            # lo               inet 127.0.0.1/8 scope host lo
-            m = re.match(r"(\S+)\s+inet\s+([\d.]+)/", line)
+            m = re.match(r"\d+:\s+(\S+)\s+inet\s+([\d.]+)/", line)
             if not m:
                 continue
             iface, ip = m.group(1), m.group(2)
             if ip.startswith("127."):
                 continue
-            if iface.startswith("wl"):
+            if iface.startswith("enx"):
+                hint = "USB RNDIS (PICO) — use this IP as camera IP on headset"
+            elif iface.startswith("wl"):
                 hint = "Wi‑Fi — use this if PICO is on wireless LAN"
             elif iface.startswith(("en", "eth")):
-                hint = "wired/USB — only if headset is on this same subnet"
+                hint = "wired — only if headset is on this same subnet"
             else:
                 hint = "check same subnet as headset"
             entries.append((iface, ip, hint))
@@ -105,6 +106,79 @@ def get_network_interfaces() -> list[tuple[str, str, str]]:
         except OSError:
             pass
     return entries
+
+
+def headset_connect_candidates(pc_ip: str, gateway: str | None = None) -> list[str]:
+    """PICO ZEDMINI Listen IPs to try on the USB subnet (.129 first, then gateway)."""
+    parts = pc_ip.split(".")
+    candidates: list[str] = []
+    if len(parts) == 4:
+        candidates.append(f"{parts[0]}.{parts[1]}.{parts[2]}.129")
+    if gateway:
+        candidates.append(gateway)
+    return list(dict.fromkeys(candidates))
+
+
+def detect_pico_usb_network() -> tuple[str, str, str, list[str]] | None:
+    """Detect PICO USB RNDIS IPs from Linux enx* interface.
+
+    Returns (headset_ip, pc_ip, iface, connect_candidates) or None if no USB link is up.
+    """
+    import re
+    import subprocess
+
+    try:
+        addr_out = subprocess.check_output(["ip", "-4", "-o", "addr", "show"], text=True)
+        route_out = subprocess.check_output(["ip", "-4", "route", "show"], text=True)
+    except (OSError, subprocess.CalledProcessError):
+        return None
+
+    pc_by_iface: dict[str, str] = {}
+    for line in addr_out.splitlines():
+        m = re.match(r"\d+:\s+(\S+)\s+inet\s+([\d.]+)/", line)
+        if not m:
+            continue
+        iface, ip = m.group(1), m.group(2)
+        if iface.startswith("enx") and not ip.startswith("127."):
+            pc_by_iface[iface] = ip
+
+    if not pc_by_iface:
+        return None
+
+    for line in route_out.splitlines():
+        m = re.match(r"default via (\d+\.\d+\.\d+\.\d+) dev (\S+)", line)
+        if m and m.group(2) in pc_by_iface:
+            gateway = m.group(1)
+            pc_ip = pc_by_iface[m.group(2)]
+            candidates = headset_connect_candidates(pc_ip, gateway)
+            return candidates[0], pc_ip, m.group(2), candidates
+
+    return None
+
+
+def resolve_vr_usb_ips(
+    headset_ip: str,
+    pc_service_ip: str,
+    *,
+    auto_usb_ip: bool = True,
+) -> tuple[str, str, list[str]]:
+    """Pick VR stream IPs, auto-detecting USB RNDIS when enabled."""
+    if auto_usb_ip:
+        detected = detect_pico_usb_network()
+        if detected is not None:
+            headset_ip, pc_service_ip, iface, candidates = detected
+            extra = f" (also tries {', '.join(candidates[1:])})" if len(candidates) > 1 else ""
+            print(
+                f"USB PICO auto-detected ({iface}): "
+                f"camera IP = {pc_service_ip}, headset = {headset_ip}{extra}"
+            )
+            return headset_ip, pc_service_ip, candidates
+        print(
+            f"No USB (enx*) link detected; using VR IPs "
+            f"camera IP = {pc_service_ip}, headset = {headset_ip}",
+            file=sys.stderr,
+        )
+    return headset_ip, pc_service_ip, headset_connect_candidates(pc_service_ip, headset_ip)
 
 
 def print_usb_pico_hint(pc_service_ip: str, headset_ip: str, port: int) -> None:
@@ -124,22 +198,30 @@ def wait_for_headset_connection(
     port: int,
     pc_service_ip: str,
     timeout_s: float = 120.0,
+    host_candidates: list[str] | None = None,
 ) -> socket.socket:
     """Retry until PICO opens port 12345 (Listen mode), or timeout."""
+    hosts = list(dict.fromkeys(host_candidates or [host]))
+    if host not in hosts:
+        hosts.insert(0, host)
+    host_label = ", ".join(hosts)
     print(f">>> On PICO: tap **Listen** now (camera IP = {pc_service_ip}).")
-    print(f">>> Waiting up to {timeout_s:.0f}s for {host}:{port} ...\n")
+    print(f">>> Waiting up to {timeout_s:.0f}s for {host_label}:{port} ...\n")
 
     deadline = time.perf_counter() + timeout_s
     attempt = 0
+    host_idx = 0
     while time.perf_counter() < deadline:
         attempt += 1
+        target = hosts[host_idx % len(hosts)]
+        host_idx += 1
         try:
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.settimeout(2.0)
-            sock.connect((host, port))
+            sock.connect((target, port))
             sock.settimeout(None)
             tune_socket(sock)
-            print(f"[client] Connected to headset (attempt {attempt}).")
+            print(f"[client] Connected to {target}:{port} (attempt {attempt}).")
             return sock
         except OSError:
             if attempt == 1 or attempt % 5 == 0:
@@ -147,7 +229,7 @@ def wait_for_headset_connection(
             time.sleep(1.0)
 
     raise ConnectionError(
-        f"Could not connect to {host}:{port} after {timeout_s:.0f}s. "
+        f"Could not connect to {host_label}:{port} after {timeout_s:.0f}s. "
         "On PICO: ZEDMINI → Listen, camera IP = "
         f"{pc_service_ip}, then run this script again."
     )
@@ -483,6 +565,52 @@ def warmup_camera(
     return pipeline, config
 
 
+def encode_frame_to_packets(
+    codec: av.codec.CodecContext,
+    color_bgr: np.ndarray,
+    stereo_sbs: bool,
+    layout: str = "sbs",
+    force_keyframe: bool = False,
+) -> list[bytes]:
+    """Encode one BGR frame to H.264 Annex-B payloads (no network I/O)."""
+    color_bgr = prepare_frame(color_bgr, stereo_sbs, layout)
+    video_frame = av.VideoFrame.from_ndarray(color_bgr, format="bgr24").reformat(format="yuv420p")
+    if force_keyframe:
+        video_frame.pict_type = PictureType.I
+    packets: list[bytes] = []
+    for packet in codec.encode(video_frame):
+        payload = bytes(packet)
+        if payload:
+            packets.append(payload)
+    return packets
+
+
+def build_bootstrap_packets(
+    codec: av.codec.CodecContext,
+    first_frame: np.ndarray,
+    stereo_sbs: bool,
+    layout: str,
+    get_frame: Callable[[], np.ndarray] | None = None,
+    max_frames: int = 5,
+) -> list[bytes]:
+    """Pre-encode H.264 keyframe packets before TCP connect (headset times out quickly)."""
+    prepared: list[bytes] = []
+    for i in range(max_frames):
+        frame = first_frame if i == 0 else (get_frame() if get_frame is not None else first_frame)
+        prepared.extend(
+            encode_frame_to_packets(codec, frame, stereo_sbs, layout, force_keyframe=(i == 0))
+        )
+        if prepared:
+            break
+    return prepared
+
+
+def send_prepared_h264_packets(sock: socket.socket, packets: list[bytes]) -> int:
+    for payload in packets:
+        send_h264_packet(sock, payload)
+    return len(packets)
+
+
 def encode_and_send_frame(
     sock: socket.socket,
     codec: av.codec.CodecContext,
@@ -492,17 +620,8 @@ def encode_and_send_frame(
     force_keyframe: bool = False,
 ) -> int:
     """Encode one BGR frame and send all resulting H.264 packets. Returns packet count."""
-    color_bgr = prepare_frame(color_bgr, stereo_sbs, layout)
-    video_frame = av.VideoFrame.from_ndarray(color_bgr, format="bgr24").reformat(format="yuv420p")
-    if force_keyframe:
-        video_frame.pict_type = PictureType.I
-    count = 0
-    for packet in codec.encode(video_frame):
-        payload = bytes(packet)
-        if payload:
-            send_h264_packet(sock, payload)
-            count += 1
-    return count
+    packets = encode_frame_to_packets(codec, color_bgr, stereo_sbs, layout, force_keyframe=force_keyframe)
+    return send_prepared_h264_packets(sock, packets)
 
 
 def stream_loop(
@@ -760,6 +879,7 @@ def stream_to_vr(
     before_frame: Callable[[], bool] | None = None,
     on_stop: Callable[[], None] | None = None,
     first_frame: np.ndarray | None = None,
+    bootstrap_packets: list[bytes] | None = None,
     manage_cameras: bool = True,
 ) -> int:
     print("Streaming... (Ctrl+C to stop)")
@@ -767,10 +887,14 @@ def stream_to_vr(
     # Headset closes the socket if no video arrives quickly after TCP connect.
     sent = 0
     try:
+        if bootstrap_packets:
+            sent = send_prepared_h264_packets(sock, bootstrap_packets)
         for i in range(10):
+            if sent > 0 and i >= 2:
+                break
             color = first_frame if i == 0 and first_frame is not None else get_frame()
             sent += encode_and_send_frame(
-                sock, codec, color, stereo_sbs, layout, force_keyframe=(i == 0)
+                sock, codec, color, stereo_sbs, layout, force_keyframe=(sent == 0)
             )
             if sent > 0 and i >= 2:
                 break
@@ -820,6 +944,11 @@ def main() -> int:
         type=str,
         default="192.168.88.57",
         help="Shown on headset as camera/PC-Service IP (for your reference only)",
+    )
+    parser.add_argument(
+        "--no-auto-usb-ip",
+        action="store_true",
+        help="Disable auto-detect of PICO USB (enx*) IPs; use --ip / --pc-service-ip as-is",
     )
     parser.add_argument("--bind", type=str, default="0.0.0.0", help="Listen address for server mode")
     parser.add_argument("--port", type=int, default=12345, help="TCP port (default: 12345)")
@@ -911,7 +1040,11 @@ def main() -> int:
     encode_width = capture_width * 2 if stereo_sbs else capture_width
     encode_height = capture_height
 
+    headset_candidates: list[str] = []
     if args.mode == "client":
+        args.ip, args.pc_service_ip, headset_candidates = resolve_vr_usb_ips(
+            args.ip, args.pc_service_ip, auto_usb_ip=not args.no_auto_usb_ip
+        )
         print_usb_pico_hint(args.pc_service_ip, args.ip, args.port)
 
     main_pipeline: rs.pipeline | None = None
@@ -979,11 +1112,20 @@ def main() -> int:
         f"encode {encode_width}x{encode_height}  bitrate={bitrate // 1_000_000}Mbps  ({layout_desc})"
     )
     codec = create_h264_encoder(encode_width, encode_height, stream_fps, bitrate, x264_preset)
+    prefetch_frame = get_frame()
+    bootstrap_packets = build_bootstrap_packets(
+        codec, prefetch_frame, stereo_sbs, args.layout, get_frame=get_frame
+    )
+    print(f"Pre-encoded {len(bootstrap_packets)} H.264 packet(s) ready for instant stream start.")
 
     try:
         if args.mode == "client":
             sock = wait_for_headset_connection(
-                args.ip, args.port, args.pc_service_ip, timeout_s=args.connect_timeout
+                args.ip,
+                args.port,
+                args.pc_service_ip,
+                timeout_s=args.connect_timeout,
+                host_candidates=headset_candidates,
             )
         else:
             sock = accept_tcp_server(args.bind, args.port)
@@ -1007,6 +1149,8 @@ def main() -> int:
         preview=args.preview,
         before_frame=before_frame,
         on_stop=on_stop,
+        first_frame=prefetch_frame,
+        bootstrap_packets=bootstrap_packets,
     )
 
 

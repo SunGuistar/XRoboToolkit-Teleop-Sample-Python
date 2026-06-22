@@ -6,7 +6,8 @@ Uses the installed LeRobotDataset API (v2/v3 compatible import paths).
 Images are stored as video via LeRobot; tabular fields go to parquet.
 
 Field mapping:
-  image_main           → observation.images.main
+  image_main           → observation.images.main   (overhead / base)
+  image_pip            → observation.images.pip    (wrist, optional)
   [qpos, gripper_state] → observation.state   (7-dim, 0=open 1=close)
   [target_q, gripper_cmd] → action            (7-dim, 0=open 1=close)
 
@@ -73,26 +74,34 @@ def load_raw_episode(path: Path) -> tuple[dict, list[dict]]:
     return data["metadata"], data["frames"]
 
 
-def decode_image_main(frame: dict) -> np.ndarray:
+MAIN_IMAGE_KEY = "observation.images.main"
+PIP_IMAGE_KEY = "observation.images.pip"
+
+
+def decode_image(frame: dict, key: str) -> np.ndarray:
     """Return RGB uint8 image for LeRobot."""
-    img = frame["image_main"]
+    img = frame[key]
     if isinstance(img, bytes):
         bgr = decompress_jpg_to_image(img)
     else:
         bgr = np.asarray(img)
     if bgr is None:
-        raise ValueError("Failed to decode image_main")
+        raise ValueError(f"Failed to decode {key}")
     return cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
 
 
-def build_features(image_shape: tuple[int, int, int]) -> dict:
-    h, w, c = image_shape
+def _video_feature(shape: tuple[int, int, int]) -> dict:
+    h, w, c = shape
     return {
-        "observation.images.main": {
-            "dtype": "video",
-            "shape": (h, w, c),
-            "names": ["height", "width", "channel"],
-        },
+        "dtype": "video",
+        "shape": (h, w, c),
+        "names": ["height", "width", "channel"],
+    }
+
+
+def build_features(main_shape: tuple[int, int, int], *, pip_shape: tuple[int, int, int] | None) -> dict:
+    features = {
+        MAIN_IMAGE_KEY: _video_feature(main_shape),
         "observation.state": {
             "dtype": "float32",
             "shape": (7,),
@@ -104,6 +113,9 @@ def build_features(image_shape: tuple[int, int, int]) -> dict:
             "names": ["j0", "j1", "j2", "j3", "j4", "j5", "gripper"],
         },
     }
+    if pip_shape is not None:
+        features[PIP_IMAGE_KEY] = _video_feature(pip_shape)
+    return features
 
 
 def filter_frames(
@@ -124,6 +136,13 @@ def write_success_sidecar(output_dir: Path, success_map: dict[int, bool]) -> Non
     print(f"Wrote episode success map → {sidecar}")
 
 
+def _find_frame_with_pip(frames: list[dict]) -> dict | None:
+    for frame in frames:
+        if frame.get("image_pip") is not None:
+            return frame
+    return None
+
+
 def convert_episodes(
     raw_dir: Path,
     output_dir: Path,
@@ -133,6 +152,7 @@ def convert_episodes(
     include_failed: bool,
     include_inactive: bool,
     robot_type: str,
+    include_pip: bool,
 ) -> None:
     LeRobotDataset, lerobot_version, import_path = import_lerobot_dataset()
     print(f"LeRobot version={lerobot_version}, import={import_path}")
@@ -145,8 +165,16 @@ def convert_episodes(
     _, first_frames = load_raw_episode(episode_files[0])
     if not first_frames:
         raise ValueError(f"First episode empty: {episode_files[0]}")
-    rgb0 = decode_image_main(first_frames[0])
-    features = build_features(rgb0.shape)
+    rgb0 = decode_image(first_frames[0], "image_main")
+    pip_frame = _find_frame_with_pip(first_frames) if include_pip else None
+    if include_pip and pip_frame is None:
+        raise ValueError(
+            f"No image_pip in {episode_files[0]}. Re-record with --record-save-pip or pass --no-pip."
+        )
+    pip_shape = decode_image(pip_frame, "image_pip").shape if pip_frame is not None else None
+    features = build_features(rgb0.shape, pip_shape=pip_shape)
+    if pip_shape is not None:
+        print(f"Dual-camera: {MAIN_IMAGE_KEY} + {PIP_IMAGE_KEY} ({pip_shape[0]}x{pip_shape[1]})")
 
     if output_dir.exists() and any(output_dir.iterdir()):
         print(f"Warning: output_dir {output_dir} is not empty.")
@@ -180,7 +208,7 @@ def convert_episodes(
             continue
 
         for frame in kept:
-            rgb = decode_image_main(frame)
+            rgb_main = decode_image(frame, "image_main")
             qpos = np.asarray(frame["qpos"], dtype=np.float32).reshape(6)
             target_q = np.asarray(frame["target_q"], dtype=np.float32).reshape(6)
             gripper_state = np.float32(frame["gripper_state"])
@@ -190,11 +218,15 @@ def convert_episodes(
             action = np.concatenate([target_q, [gripper_cmd]]).astype(np.float32)
 
             lerobot_frame = {
-                "observation.images.main": rgb,
+                MAIN_IMAGE_KEY: rgb_main,
                 "observation.state": observation_state,
                 "action": action,
                 "task": metadata.get("task", task),
             }
+            if pip_shape is not None:
+                if frame.get("image_pip") is None:
+                    raise ValueError(f"Episode {ep_index} frame {frame.get('frame_index')} missing image_pip")
+                lerobot_frame[PIP_IMAGE_KEY] = decode_image(frame, "image_pip")
 
             dataset.add_frame(lerobot_frame)
 
@@ -239,11 +271,27 @@ def main() -> None:
         action="store_true",
         help="Include frames with control_active=False (default: filter them out)",
     )
+    parser.add_argument(
+        "--no-pip",
+        action="store_true",
+        help="Skip wrist/PiP camera (default: include observation.images.pip)",
+    )
+    parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Remove output_dir if it already exists before converting",
+    )
     args = parser.parse_args()
 
     if not args.raw_dir.is_dir():
         print(f"raw-dir not found: {args.raw_dir}", file=sys.stderr)
         raise SystemExit(1)
+
+    if args.overwrite and args.output_dir.exists():
+        import shutil
+
+        shutil.rmtree(args.output_dir)
+        print(f"Removed existing output_dir: {args.output_dir}")
 
     try:
         convert_episodes(
@@ -255,6 +303,7 @@ def main() -> None:
             include_failed=args.include_failed,
             include_inactive=args.include_inactive,
             robot_type=args.robot_type,
+            include_pip=not args.no_pip,
         )
     except ImportError as exc:
         print(exc, file=sys.stderr)
