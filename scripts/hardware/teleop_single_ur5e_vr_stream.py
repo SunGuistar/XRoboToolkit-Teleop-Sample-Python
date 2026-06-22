@@ -32,7 +32,7 @@ BC data collection (V1):
   Check episode:  python scripts/check_ur5e_bc_episode.py logs/ur5e_bc/raw/episode_00000.pkl
   Convert LeRobot: python scripts/convert_ur5e_raw_to_lerobot.py --raw-dir logs/ur5e_bc/raw
 
-Order: script starts → camera warmup → arm threads → BC recorder → wait for PICO Listen → stream.
+Order: script starts → camera warmup → arm threads → BC recorder → wait for PICO Listen → stream (or continue teleop if VR fails).
 """
 
 from __future__ import annotations
@@ -130,6 +130,29 @@ def _wrap_get_frame_with_alignment_debug(
         )
 
     return get_frame
+
+
+def _run_teleop_idle(
+    stop_signal: threading.Event,
+    before_frame: Callable[[], bool] | None = None,
+    *,
+    vr_skipped: bool = False,
+) -> None:
+    """Keep arm teleop + BC recording alive when VR video is unavailable."""
+    if vr_skipped:
+        print(
+            "VR video unavailable — continuing arm teleop and BC recording (Ctrl+C to stop).\n"
+            "  Tip: ZEDMINI → Listen → camera IP = your PC USB IP, then restart to retry video."
+        )
+    else:
+        print("VR stream ended — continuing arm teleop and BC recording (Ctrl+C to stop).")
+    try:
+        while not stop_signal.is_set():
+            if before_frame is not None:
+                before_frame()
+            time.sleep(1.0 / 30.0)
+    except KeyboardInterrupt:
+        print("\nStopped by user.")
 
 
 def _start_arm_threads(arm_controller: SingleArmURController, stop_signal: threading.Event) -> list[threading.Thread]:
@@ -321,16 +344,16 @@ def main(
             bc_recorder.start(stop_signal)
 
         codec = vr.create_h264_encoder(encode_width, encode_height, fps, bitrate, x264_preset)
+        prefetch_frame = get_frame()
 
         try:
             sock = vr.wait_for_headset_connection(
                 headset_ip, stream_port, pc_service_ip, timeout_s=connect_timeout
             )
         except ConnectionError as exc:
-            print(exc, file=sys.stderr)
-            cleanup_cameras()
-            cameras_ready = False
-            raise SystemExit(1) from exc
+            print(f"VR connect timeout (teleop continues): {exc}", file=sys.stderr)
+            _run_teleop_idle(stop_signal, before_frame, vr_skipped=True)
+            return
 
         exit_code = vr.stream_to_vr(
             sock=sock,
@@ -344,9 +367,12 @@ def main(
             preview=preview,
             before_frame=before_frame,
             on_stop=None,
+            first_frame=prefetch_frame,
+            manage_cameras=False,
         )
-        cameras_ready = False
-        raise SystemExit(exit_code)
+        if exit_code != 0:
+            _run_teleop_idle(stop_signal, before_frame, vr_skipped=True)
+            return
 
     except RuntimeError as exc:
         print(exc, file=sys.stderr)

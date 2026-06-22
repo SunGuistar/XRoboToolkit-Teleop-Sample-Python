@@ -759,18 +759,29 @@ def stream_to_vr(
     preview: bool,
     before_frame: Callable[[], bool] | None = None,
     on_stop: Callable[[], None] | None = None,
+    first_frame: np.ndarray | None = None,
+    manage_cameras: bool = True,
 ) -> int:
     print("Streaming... (Ctrl+C to stop)")
 
     # Headset closes the socket if no video arrives quickly after TCP connect.
     sent = 0
-    for i in range(10):
-        color = get_frame()
-        sent += encode_and_send_frame(
-            sock, codec, color, stereo_sbs, layout, force_keyframe=(i == 0)
-        )
-        if sent > 0 and i >= 2:
-            break
+    try:
+        for i in range(10):
+            color = first_frame if i == 0 and first_frame is not None else get_frame()
+            sent += encode_and_send_frame(
+                sock, codec, color, stereo_sbs, layout, force_keyframe=(i == 0)
+            )
+            if sent > 0 and i >= 2:
+                break
+    except (BrokenPipeError, ConnectionError, OSError) as exc:
+        print(f"Headset closed connection before stream started: {exc}", file=sys.stderr)
+        try:
+            sock.close()
+        except OSError:
+            pass
+        return 1
+
     print(f"Sent {sent} H.264 packet(s) immediately after connect.")
     if sent == 0:
         print("Warning: encoder produced no packets; headset may disconnect.", file=sys.stderr)
@@ -783,10 +794,11 @@ def stream_to_vr(
     finally:
         if on_stop is not None:
             on_stop()
-        for reader in readers:
-            reader.stop()
-        for pipeline in pipelines:
-            pipeline.stop()
+        if manage_cameras:
+            for reader in readers:
+                reader.stop()
+            for pipeline in pipelines:
+                pipeline.stop()
 
 
 def main() -> int:

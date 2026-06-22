@@ -23,7 +23,7 @@ def get_network_interfaces():
     try:
         out = subprocess.check_output(["ip", "-4", "-o", "addr", "show"], text=True)
         for line in out.splitlines():
-            m = re.match(r"(\S+)\s+inet\s+([\d.]+)/", line)
+            m = re.match(r"\d+:\s+(\S+)\s+inet\s+([\d.]+)/", line)
             if m and not m.group(2).startswith("127."):
                 entries.append((m.group(1), m.group(2)))
     except (OSError, subprocess.CalledProcessError):
