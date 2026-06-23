@@ -67,7 +67,6 @@ from xrobotoolkit_teleop.hardware.interface.universal_robots import (
     LEFT_ROBOT_IP,
     RIGHT_INITIAL_JOINT_DEG,
     RIGHT_ROBOT_IP,
-    URController,
 )
 from xrobotoolkit_teleop.hardware.single_arm_ur_controller import (
     LEFT_CONTROLLER_MANIPULATOR_CONFIG,
@@ -85,21 +84,36 @@ DEFAULT_MAIN_SERIAL = "406122070449"
 DEFAULT_PIP_SERIAL = "152122074297"
 
 
-def _run_reset(robot_ip: str, initial_joint: np.ndarray) -> None:
-    print(f"Reset: moving UR to home @ {robot_ip} (no VR / no DH gripper)...")
-    ur = URController(
-        robot_ip=robot_ip,
-        initial_joint_positions=np.deg2rad(initial_joint),
-        use_gripper=False,
-    )
+def _run_reset(robot_ip: str, initial_joint: np.ndarray, manipulator_config: dict) -> None:
+    print(f"Reset: moving UR to home @ {robot_ip} (DH gripper opens if connected)...")
+    xr_client = XrClient()
+    arm_controller: SingleArmURController | None = None
     try:
-        ur.reset()
+        arm_controller = SingleArmURController(
+            xr_client,
+            manipulator_config=manipulator_config,
+            robot_ip=robot_ip,
+            initial_joint_deg=initial_joint,
+            use_dh_gripper=True,
+            dh_gripper_port=DH_GRIPPER_PORT,
+            dh_gripper_force=DH_GRIPPER_FORCE,
+            dh_gripper_speed=DH_GRIPPER_SPEED,
+            dh_gripper_slave_id=DH_GRIPPER_SLAVE_ID,
+            dh_gripper_baudrate=DH_GRIPPER_BAUDRATE,
+        )
+        if arm_controller.init_dh_gripper():
+            print(f"DH gripper ready on {DH_GRIPPER_PORT}.")
+        else:
+            print("DH gripper unavailable — arm-only reset.")
+        arm_controller.reset_to_home(open_gripper=True)
         print("Arm reset completed.")
     except Exception as e:
         print(f"Error during reset: {e}")
-        ur.close()
         raise SystemExit(1) from e
-    ur.close()
+    finally:
+        if arm_controller is not None:
+            arm_controller.close()
+        xr_client.close()
 
 
 def _make_alignment_renderer() -> AlignmentVisionRenderer:
@@ -219,7 +233,7 @@ def main(
     )
 
     if reset:
-        _run_reset(robot_ip, initial_joint)
+        _run_reset(robot_ip, initial_joint, manipulator_config)
         return
 
     if not 0.1 <= pip_scale <= 0.5:

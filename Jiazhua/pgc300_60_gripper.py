@@ -72,13 +72,14 @@ def main() -> None:
                 gripper.apply_motion_config(args.force, args.speed)
 
         if args.command == "init":
-            maybe_apply_config()
             gripper.initialize(full_calibration=False)
+            maybe_apply_config()
+            gripper.open(wait=args.wait, verify=verify_motion)
             print("Initialization completed. Status:")
             print_status(gripper)
         elif args.command == "recalibrate":
-            maybe_apply_config()
             gripper.initialize(full_calibration=True)
+            maybe_apply_config()
             print("Full recalibration started.")
         elif args.command == "open":
             print("Before:")
@@ -104,8 +105,9 @@ def main() -> None:
         elif args.command == "status":
             print_status(gripper)
         elif args.command == "demo":
-            maybe_apply_config()
             gripper.initialize()
+            maybe_apply_config()
+            gripper.open(wait=True, verify=verify_motion)
             for i in range(args.cycles):
                 print(f"Cycle {i + 1}/{args.cycles}: open")
                 gripper.open(wait=True, verify=verify_motion)
