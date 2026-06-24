@@ -27,11 +27,15 @@ import argparse
 import importlib
 import json
 import pickle
+import shutil
 import sys
+import tempfile
 from pathlib import Path
 
+import av
 import cv2
 import numpy as np
+from PIL import Image
 
 from xrobotoolkit_teleop.bc.config import BCConfig, DEFAULT_TASK
 from xrobotoolkit_teleop.utils.image_utils import decompress_jpg_to_image
@@ -127,6 +131,184 @@ def filter_frames(
     return [f for f in frames if f.get("control_active", False)]
 
 
+def import_encode_video_frames():
+    for module_path in ("lerobot.datasets.video_utils", "lerobot.common.datasets.video_utils"):
+        try:
+            mod = importlib.import_module(module_path)
+            return mod.encode_video_frames
+        except (ImportError, AttributeError):
+            continue
+    raise ImportError("Could not import encode_video_frames from lerobot")
+
+
+def load_dataset_info(output_dir: Path) -> dict:
+    return json.loads((output_dir / "meta" / "info.json").read_text(encoding="utf-8"))
+
+
+def video_file_path(info: dict, episode_index: int, video_key: str) -> Path:
+    chunk = episode_index // info["chunks_size"]
+    rel = info["video_path"].format(
+        episode_chunk=chunk,
+        video_key=video_key,
+        episode_index=episode_index,
+    )
+    return Path(rel)
+
+
+def count_decoded_video_frames(video_path: Path) -> int:
+    """Return number of decodable frames; raises on corrupt bitstream."""
+    container = av.open(str(video_path))
+    stream = container.streams.video[0]
+    count = sum(1 for _ in container.decode(stream))
+    container.close()
+    return count
+
+
+def verify_episode_videos(
+    output_dir: Path,
+    info: dict,
+    episode_index: int,
+    num_frames: int,
+    video_keys: list[str],
+) -> list[str]:
+    """Return video keys that are missing or have wrong / undecodable frame counts."""
+    failed: list[str] = []
+    for key in video_keys:
+        path = output_dir / video_file_path(info, episode_index, key)
+        if not path.is_file():
+            failed.append(key)
+            continue
+        try:
+            decoded = count_decoded_video_frames(path)
+        except av.error.FFmpegError:
+            failed.append(key)
+            continue
+        if decoded != num_frames:
+            failed.append(key)
+    return failed
+
+
+def reencode_video_from_rgb_frames(
+    images: list[np.ndarray],
+    video_path: Path,
+    fps: int,
+    *,
+    vcodec: str,
+    encode_video_frames,
+) -> None:
+    video_path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="ur5e_reencode_") as tmp:
+        tmp_dir = Path(tmp)
+        for idx, rgb in enumerate(images):
+            Image.fromarray(np.asarray(rgb, dtype=np.uint8)).save(tmp_dir / f"frame_{idx:06d}.png")
+        encode_video_frames(tmp_dir, video_path, fps, vcodec=vcodec, overwrite=True)
+
+
+def reencode_episode_videos_with_retry(
+    output_dir: Path,
+    info: dict,
+    episode_index: int,
+    frame_images: dict[str, list[np.ndarray]],
+    fps: int,
+    encode_video_frames,
+    *,
+    primary_codec: str = "libsvtav1",
+    fallback_codec: str = "h264",
+    max_attempts: int = 3,
+) -> None:
+    codecs = [primary_codec, fallback_codec]
+    for key, images in frame_images.items():
+        video_path = output_dir / video_file_path(info, episode_index, key)
+        last_error: Exception | None = None
+        for attempt in range(max_attempts):
+            vcodec = codecs[min(attempt, len(codecs) - 1)]
+            try:
+                reencode_video_from_rgb_frames(
+                    images,
+                    video_path,
+                    fps,
+                    vcodec=vcodec,
+                    encode_video_frames=encode_video_frames,
+                )
+                decoded = count_decoded_video_frames(video_path)
+                if decoded != len(images):
+                    raise RuntimeError(f"decoded {decoded} frames, expected {len(images)}")
+                if attempt > 0 or vcodec != primary_codec:
+                    print(f"  Re-encoded {key} with {vcodec} (attempt {attempt + 1})")
+                break
+            except Exception as exc:
+                last_error = exc
+                if video_path.is_file():
+                    video_path.unlink()
+        else:
+            raise RuntimeError(
+                f"Failed to encode episode {episode_index} {key} after {max_attempts} attempts"
+            ) from last_error
+
+
+def repair_dataset_videos(
+    raw_dir: Path,
+    output_dir: Path,
+    *,
+    fps: int | None = None,
+    include_inactive: bool = False,
+    include_pip: bool = True,
+    episodes: list[int] | None = None,
+) -> None:
+    """Re-encode video(s) for existing LeRobot dataset episodes from raw pickles."""
+    encode_video_frames = import_encode_video_frames()
+    info = load_dataset_info(output_dir)
+    dataset_fps = int(fps if fps is not None else info["fps"])
+    video_keys = [MAIN_IMAGE_KEY]
+    if include_pip and PIP_IMAGE_KEY in info["features"]:
+        video_keys.append(PIP_IMAGE_KEY)
+
+    if episodes is None:
+        episodes = list(range(info["total_episodes"]))
+
+    repaired = 0
+    for ep_index in episodes:
+        raw_path = raw_dir / f"episode_{ep_index:05d}.pkl"
+        if not raw_path.is_file():
+            raise FileNotFoundError(f"Missing raw episode: {raw_path}")
+
+        _, frames = load_raw_episode(raw_path)
+        kept = filter_frames(frames, include_inactive)
+        failed = verify_episode_videos(output_dir, info, ep_index, len(kept), video_keys)
+        if not failed:
+            continue
+
+        print(f"Repair episode {ep_index}: re-encoding {failed}")
+        frame_images: dict[str, list[np.ndarray]] = {}
+        for key in failed:
+            src_key = "image_main" if key == MAIN_IMAGE_KEY else "image_pip"
+            frame_images[key] = [decode_image(frame, src_key) for frame in kept]
+
+        reencode_episode_videos_with_retry(
+            output_dir,
+            info,
+            ep_index,
+            frame_images,
+            dataset_fps,
+            encode_video_frames,
+        )
+        still_failed = verify_episode_videos(output_dir, info, ep_index, len(kept), failed)
+        if still_failed:
+            raise RuntimeError(f"Episode {ep_index} still broken after repair: {still_failed}")
+        repaired += 1
+        print(f"  Repaired episode {ep_index} ({len(kept)} frames)")
+
+    print(f"Repair done: {repaired} episode(s) updated in {output_dir}")
+
+
+def cleanup_temp_images(output_dir: Path) -> None:
+    """Remove LeRobot intermediate PNG cache (images/ → mp4 encoding temp files)."""
+    images_dir = output_dir / "images"
+    if images_dir.exists():
+        shutil.rmtree(images_dir)
+        print(f"Removed temporary images cache → {images_dir}")
+
+
 def write_success_sidecar(output_dir: Path, success_map: dict[int, bool]) -> None:
     meta_dir = output_dir / "meta"
     meta_dir.mkdir(parents=True, exist_ok=True)
@@ -189,6 +371,12 @@ def convert_episodes(
     )
 
     dataset = LeRobotDataset.create(**create_kwargs)
+    encode_video_frames = import_encode_video_frames()
+    info = dataset.meta.info
+    video_keys = [MAIN_IMAGE_KEY]
+    if pip_shape is not None:
+        video_keys.append(PIP_IMAGE_KEY)
+
     success_map: dict[int, bool] = {}
     converted = 0
 
@@ -207,8 +395,13 @@ def convert_episodes(
             print(f"Skip episode {ep_index}: no frames after filtering")
             continue
 
+        frame_images: dict[str, list[np.ndarray]] = {MAIN_IMAGE_KEY: []}
+        if pip_shape is not None:
+            frame_images[PIP_IMAGE_KEY] = []
+
         for frame in kept:
             rgb_main = decode_image(frame, "image_main")
+            frame_images[MAIN_IMAGE_KEY].append(rgb_main)
             qpos = np.asarray(frame["qpos"], dtype=np.float32).reshape(6)
             target_q = np.asarray(frame["target_q"], dtype=np.float32).reshape(6)
             gripper_state = np.float32(frame["gripper_state"])
@@ -221,16 +414,33 @@ def convert_episodes(
                 MAIN_IMAGE_KEY: rgb_main,
                 "observation.state": observation_state,
                 "action": action,
-                "task": metadata.get("task", task),
             }
             if pip_shape is not None:
                 if frame.get("image_pip") is None:
                     raise ValueError(f"Episode {ep_index} frame {frame.get('frame_index')} missing image_pip")
-                lerobot_frame[PIP_IMAGE_KEY] = decode_image(frame, "image_pip")
+                rgb_pip = decode_image(frame, "image_pip")
+                frame_images[PIP_IMAGE_KEY].append(rgb_pip)
+                lerobot_frame[PIP_IMAGE_KEY] = rgb_pip
 
-            dataset.add_frame(lerobot_frame)
+            episode_task = metadata.get("task", task)
+            dataset.add_frame(lerobot_frame, episode_task)
 
         dataset.save_episode()
+        failed = verify_episode_videos(output_dir, info, ep_index, len(kept), video_keys)
+        if failed:
+            print(f"Episode {ep_index}: video verify failed for {failed}, re-encoding...")
+            reencode_episode_videos_with_retry(
+                output_dir,
+                info,
+                ep_index,
+                {key: frame_images[key] for key in failed},
+                fps,
+                encode_video_frames,
+            )
+            still_failed = verify_episode_videos(output_dir, info, ep_index, len(kept), video_keys)
+            if still_failed:
+                raise RuntimeError(f"Episode {ep_index} videos still invalid: {still_failed}")
+
         converted += 1
         print(f"Converted episode {ep_index} ({len(kept)} frames, success={success})")
 
@@ -244,6 +454,7 @@ def convert_episodes(
         consolidate()
         print("Called dataset.consolidate() (legacy API)")
 
+    cleanup_temp_images(output_dir)
     write_success_sidecar(output_dir, success_map)
     print(f"Done: {converted} episodes → {output_dir}")
 
@@ -281,15 +492,43 @@ def main() -> None:
         action="store_true",
         help="Remove output_dir if it already exists before converting",
     )
+    parser.add_argument(
+        "--repair-videos",
+        action="store_true",
+        help="Verify and re-encode broken videos in an existing dataset (use with --raw-dir + --output-dir)",
+    )
+    parser.add_argument(
+        "--repair-episodes",
+        type=int,
+        nargs="*",
+        default=None,
+        help="Optional episode indices to repair (default: scan all episodes)",
+    )
     args = parser.parse_args()
 
     if not args.raw_dir.is_dir():
         print(f"raw-dir not found: {args.raw_dir}", file=sys.stderr)
         raise SystemExit(1)
 
-    if args.overwrite and args.output_dir.exists():
-        import shutil
+    if args.repair_videos:
+        if not args.output_dir.is_dir():
+            print(f"output-dir not found: {args.output_dir}", file=sys.stderr)
+            raise SystemExit(1)
+        try:
+            repair_dataset_videos(
+                raw_dir=args.raw_dir,
+                output_dir=args.output_dir,
+                fps=args.fps,
+                include_inactive=args.include_inactive,
+                include_pip=not args.no_pip,
+                episodes=args.repair_episodes,
+            )
+        except ImportError as exc:
+            print(exc, file=sys.stderr)
+            raise SystemExit(1) from exc
+        return
 
+    if args.overwrite and args.output_dir.exists():
         shutil.rmtree(args.output_dir)
         print(f"Removed existing output_dir: {args.output_dir}")
 
@@ -308,6 +547,8 @@ def main() -> None:
     except ImportError as exc:
         print(exc, file=sys.stderr)
         raise SystemExit(1) from exc
+    finally:
+        cleanup_temp_images(args.output_dir)
 
 
 if __name__ == "__main__":
