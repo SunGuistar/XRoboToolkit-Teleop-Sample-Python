@@ -12,6 +12,13 @@
   # 仅主相机（录制不含辅相机画面）：
   python scripts/hardware/teleop_single_ur5e_hand.py --no-pip
 
+  # 手动指定相机序列号（默认自动检测已连接 RealSense）：
+  python scripts/hardware/teleop_single_ur5e_hand.py --main-serial <SN> --pip-serial <SN>
+
+相机（默认自动）：
+  - 启动时枚举已连接 RealSense，主相机优先 D435I，辅相机优先 D435
+  - 仅一台相机时自动单路；--no-pip 强制单路
+
 手柄操作（默认 controller_side=right）：
   - 按住 Grip：移动机械臂（人工操作始终优先于策略）
   - X：开始/停止 BC 录制（停止后自动保存并回 Home）
@@ -70,8 +77,6 @@ if _spec is None or _spec.loader is None:
 rs_utils = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(rs_utils)
 
-DEFAULT_MAIN_SERIAL = "406122070449"
-DEFAULT_PIP_SERIAL = "152122074297"
 _HOME_CACHE_PATH = Path(__file__).with_name("teleop_single_ur5e_hand.home.json")
 
 
@@ -190,6 +195,76 @@ def _list_realsense_devices() -> list[tuple[str, str]]:
 def _validate_serial(serial: str, devices: list[tuple[str, str]], label: str) -> None:
     if serial not in {s for _, s in devices}:
         raise RuntimeError(f"未找到{label}相机，序列号 {serial}。")
+
+
+def _is_d435i(name: str) -> bool:
+    return "D435I" in name.upper().replace(" ", "")
+
+
+def _is_d435(name: str) -> bool:
+    normalized = name.upper().replace(" ", "")
+    return "D435" in normalized and "D435I" not in normalized
+
+
+def _normalize_serial_arg(serial: str | None) -> str | None:
+    if serial is None:
+        return None
+    serial = serial.strip()
+    return serial or None
+
+
+def _auto_resolve_camera_serials(
+    devices: list[tuple[str, str]],
+    main_serial: str | None,
+    aux_serial: str | None,
+    no_pip: bool,
+) -> tuple[str, str | None]:
+    """未指定序列号时自动选择：主相机优先 D435I，辅相机优先 D435。"""
+    if not devices:
+        raise RuntimeError("未检测到 RealSense 相机。")
+
+    all_serials = [sn for _, sn in devices]
+
+    def pick_main_auto() -> str:
+        d435i_serials = [sn for name, sn in devices if _is_d435i(name)]
+        if d435i_serials:
+            return d435i_serials[0]
+        return rs_utils.pick_default_camera_serial(devices)
+
+    def pick_aux_auto(main: str) -> str | None:
+        if no_pip or len(all_serials) < 2:
+            return None
+        d435_serials = [sn for name, sn in devices if _is_d435(name) and sn != main]
+        if d435_serials:
+            return d435_serials[0]
+        for sn in all_serials:
+            if sn != main:
+                return sn
+        return None
+
+    if main_serial:
+        _validate_serial(main_serial, devices, "主")
+        main = main_serial
+    else:
+        main = pick_main_auto()
+        print(f"自动选择主相机：{rs_utils._device_label(main)}（{main}）")
+
+    if no_pip:
+        return main, None
+
+    if aux_serial:
+        _validate_serial(aux_serial, devices, "辅")
+        if aux_serial == main:
+            raise RuntimeError("主相机与辅相机序列号不能相同。")
+        aux = aux_serial
+    else:
+        aux = pick_aux_auto(main)
+        if aux:
+            print(f"自动选择辅相机：{rs_utils._device_label(aux)}（{aux}）")
+        elif len(all_serials) < 2:
+            print("警告：仅检测到一台相机，辅相机画面不会录制。", file=sys.stderr)
+
+    return main, aux
 
 
 def _resolve_dual_color_stream(
@@ -328,19 +403,17 @@ def _run_camera_health_monitor(
 
 
 def _init_cameras(
-    main_serial: str,
+    main_serial: str | None,
     aux_serial: str | None,
+    no_pip: bool,
     capture_width: int,
     capture_height: int,
     fps: int,
 ) -> tuple[list, list[_CameraReader], int, int, int]:
     devices = _list_realsense_devices()
-    _validate_serial(main_serial, devices, "主")
+    main_serial, aux_serial = _auto_resolve_camera_serials(devices, main_serial, aux_serial, no_pip)
 
     if aux_serial:
-        _validate_serial(aux_serial, devices, "辅")
-        if main_serial == aux_serial:
-            raise RuntimeError("主相机与辅相机序列号不能相同。")
         capture_width, capture_height, fps = _resolve_dual_color_stream(
             [main_serial, aux_serial], capture_width, capture_height, fps
         )
@@ -399,8 +472,8 @@ def main(
     robot_ip: str = DEFAULT_ROBOT_IP,
     controller_side: Literal["left", "right"] = "right",
     initial_joint_deg: tuple[float, float, float, float, float, float] | None = None,
-    main_serial: str = DEFAULT_MAIN_SERIAL,
-    pip_serial: str = DEFAULT_PIP_SERIAL,
+    main_serial: str | None = None,
+    pip_serial: str | None = None,
     no_pip: bool = False,
     quality: Literal["low", "balanced", "high"] = "low",
     fps: int = 30,
@@ -430,7 +503,8 @@ def main(
         _run_reset(robot_ip, home_joint_deg, manipulator_config)
         return
 
-    use_aux_serial = None if no_pip else pip_serial
+    use_aux_serial = None if no_pip else _normalize_serial_arg(pip_serial)
+    main_serial = _normalize_serial_arg(main_serial)
     if no_pip:
         record_save_pip = False
 
@@ -485,7 +559,7 @@ def main(
         arm_controller.calc_target_joint_position()
 
         pipelines, readers, capture_width, capture_height, fps = _init_cameras(
-            main_serial, use_aux_serial, capture_width, capture_height, fps
+            main_serial, use_aux_serial, no_pip, capture_width, capture_height, fps
         )
         cameras_ready = True
         quality_labels = {"low": "低", "balanced": "均衡", "high": "高"}
