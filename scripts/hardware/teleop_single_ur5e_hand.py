@@ -17,6 +17,11 @@
   - X：开始/停止 BC 录制（停止后自动保存并回 Home）
   - Y：丢弃当前录制（并回 Home）
 
+Home 姿态：
+  - 固定保存在 scripts/hardware/teleop_single_ur5e_hand.home.json（非每次连接时重读）
+  - 更新 Home：机械臂摆好后执行  python scripts/hardware/teleop_single_ur5e_hand.py --save-home
+  - BC 录制结束 / --reset 时回到该 Home
+
 BC 数据采集（V1）：
   - 独立 10Hz 录制线程
   - 训练图像：主相机 + 辅相机（可用 --no-pip / --no-record-save-pip 关闭辅相机）
@@ -34,6 +39,7 @@ BC 数据采集（V1）：
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
 import threading
 import time
@@ -48,9 +54,7 @@ from xrobotoolkit_teleop.bc.recorder import BCEpisodeRecorder
 from xrobotoolkit_teleop.common.xr_client import XrClient
 from xrobotoolkit_teleop.hardware.interface.universal_robots import (
     DEFAULT_ROBOT_IP,
-    LEFT_INITIAL_JOINT_DEG,
     LEFT_ROBOT_IP,
-    RIGHT_INITIAL_JOINT_DEG,
     RIGHT_ROBOT_IP,
 )
 from xrobotoolkit_teleop.hardware.single_arm_ur_controller import (
@@ -68,6 +72,66 @@ _spec.loader.exec_module(rs_utils)
 
 DEFAULT_MAIN_SERIAL = "406122070449"
 DEFAULT_PIP_SERIAL = "152122074297"
+_HOME_CACHE_PATH = Path(__file__).with_name("teleop_single_ur5e_hand.home.json")
+
+
+def _format_joint_deg(q_deg: np.ndarray) -> str:
+    return np.array2string(q_deg, precision=2, separator=", ", suppress_small=True)
+
+
+def _save_home_cache(q_deg: np.ndarray) -> None:
+    payload = {
+        "joint_deg": [float(v) for v in q_deg[:6]],
+        "note": "固定 Home；仅 --save-home 时更新，遥操作启动不会覆盖。",
+    }
+    _HOME_CACHE_PATH.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+
+def _load_home_cache() -> np.ndarray | None:
+    if not _HOME_CACHE_PATH.exists():
+        return None
+    data = json.loads(_HOME_CACHE_PATH.read_text(encoding="utf-8"))
+    q_deg = np.array(data["joint_deg"], dtype=float)
+    if q_deg.shape != (6,):
+        raise RuntimeError(f"Home 文件格式无效：{_HOME_CACHE_PATH}")
+    return q_deg
+
+
+def _resolve_home_joint_deg(
+    cli_joint_deg: tuple[float, float, float, float, float, float] | None,
+) -> np.ndarray:
+    if cli_joint_deg is not None:
+        return np.array(cli_joint_deg, dtype=float)
+    cached = _load_home_cache()
+    if cached is not None:
+        return cached
+    raise RuntimeError(
+        f"未找到 Home 文件：{_HOME_CACHE_PATH}\n"
+        "请先将机械臂摆到目标 Home 位，再执行：\n"
+        "  python scripts/hardware/teleop_single_ur5e_hand.py --save-home"
+    )
+
+
+def _save_home_from_robot(robot_ip: str, manipulator_config: dict) -> None:
+    """读取机械臂当前关节角并写入 Home 文件（仅此命令会更改 Home）。"""
+    xr_client = XrClient()
+    arm_controller: SingleArmURController | None = None
+    try:
+        arm_controller = SingleArmURController(
+            xr_client,
+            manipulator_config=manipulator_config,
+            robot_ip=robot_ip,
+            initial_joint_deg=np.zeros(6, dtype=float),
+        )
+        q_rad = arm_controller.robot_controller.get_current_joint_positions()[:6].copy()
+        q_deg = np.rad2deg(q_rad)
+        _save_home_cache(q_deg)
+        print(f"Home 已保存（度）：{_format_joint_deg(q_deg)}")
+        print(f"文件：{_HOME_CACHE_PATH}")
+    finally:
+        if arm_controller is not None:
+            arm_controller.close()
+        xr_client.close()
 
 
 class _CameraReader:
@@ -188,8 +252,9 @@ def _warmup_camera(serial: str, capture_width: int, capture_height: int, fps: in
         ) from exc
 
 
-def _run_reset(robot_ip: str, initial_joint: np.ndarray, manipulator_config: dict) -> None:
+def _run_reset(robot_ip: str, home_joint_deg: np.ndarray, manipulator_config: dict) -> None:
     print(f"复位：正在将 UR 移至 Home 位（{robot_ip}）...")
+    print(f"  目标关节角（度）：{_format_joint_deg(home_joint_deg)}")
     xr_client = XrClient()
     arm_controller: SingleArmURController | None = None
     try:
@@ -197,7 +262,7 @@ def _run_reset(robot_ip: str, initial_joint: np.ndarray, manipulator_config: dic
             xr_client,
             manipulator_config=manipulator_config,
             robot_ip=robot_ip,
-            initial_joint_deg=initial_joint,
+            initial_joint_deg=home_joint_deg,
         )
         arm_controller.reset_to_home(open_gripper=False)
         print("机械臂复位完成。")
@@ -329,6 +394,7 @@ def _run_teleop_loop(stop_signal: threading.Event) -> None:
 
 def main(
     reset: bool = False,
+    save_home: bool = False,
     visual: bool = False,
     robot_ip: str = DEFAULT_ROBOT_IP,
     controller_side: Literal["left", "right"] = "right",
@@ -349,21 +415,19 @@ def main(
 ) -> None:
     if controller_side == "left":
         manipulator_config = LEFT_CONTROLLER_MANIPULATOR_CONFIG
-        default_initial_joint_deg = LEFT_INITIAL_JOINT_DEG
         if robot_ip == DEFAULT_ROBOT_IP:
             robot_ip = LEFT_ROBOT_IP
     else:
         manipulator_config = RIGHT_CONTROLLER_MANIPULATOR_CONFIG
-        default_initial_joint_deg = RIGHT_INITIAL_JOINT_DEG
 
-    initial_joint = (
-        np.array(initial_joint_deg, dtype=float)
-        if initial_joint_deg is not None
-        else default_initial_joint_deg
-    )
+    if save_home:
+        _save_home_from_robot(robot_ip, manipulator_config)
+        return
+
+    home_joint_deg = _resolve_home_joint_deg(initial_joint_deg)
 
     if reset:
-        _run_reset(robot_ip, initial_joint, manipulator_config)
+        _run_reset(robot_ip, home_joint_deg, manipulator_config)
         return
 
     use_aux_serial = None if no_pip else pip_serial
@@ -404,11 +468,13 @@ def main(
             xr_client,
             manipulator_config=manipulator_config,
             robot_ip=robot_ip,
-            initial_joint_deg=initial_joint,
+            initial_joint_deg=home_joint_deg,
             visualize_placo=visual,
             policy_mode=policy_mode,
             bc_config=bc_config,
         )
+        print(f"Home 关节角（度）：{_format_joint_deg(home_joint_deg)}")
+
         if policy_mode:
             print("policy_mode=True：请在遥操作前通过 arm_controller.set_policy() 挂载策略。")
         side_label = "左手柄" if controller_side == "left" else "右手柄"
