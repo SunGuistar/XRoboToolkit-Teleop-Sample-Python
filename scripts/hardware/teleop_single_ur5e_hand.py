@@ -12,6 +12,9 @@
   # 仅主相机（录制不含辅相机画面）：
   python scripts/hardware/teleop_single_ur5e_hand.py --no-pip
 
+  # 无相机（仅机械臂遥操作，不 BC 录制）：
+  python scripts/hardware/teleop_single_ur5e_hand.py --no-camera
+
   # 手动指定相机序列号（默认自动检测已连接 RealSense）：
   python scripts/hardware/teleop_single_ur5e_hand.py --main-serial <SN> --pip-serial <SN>
 
@@ -40,7 +43,8 @@ BC 数据采集（V1）：
   检查 episode：python scripts/check_ur5e_bc_episode.py logs/ur5e_bc/raw/episode_00000.pkl
   转 LeRobot：  python scripts/convert_ur5e_raw_to_lerobot.py --raw-dir logs/ur5e_bc/raw
 
-启动顺序：相机预热与健康检查 → 机械臂线程 → BC 录制器 → 遥操作（Ctrl+C 退出）。
+启动顺序：相机预热与健康检查（可跳过）→ 机械臂线程 → BC 录制器 → 遥操作（Ctrl+C 退出）。
+未检测到 RealSense 时默认继续（仅机械臂）；加 --require-camera 则保持旧行为（无相机即退出）。
 """
 
 from __future__ import annotations
@@ -182,10 +186,12 @@ class _CameraReader:
         self._thread.join(timeout=2.0)
 
 
-def _list_realsense_devices() -> list[tuple[str, str]]:
+def _list_realsense_devices(*, required: bool = True) -> list[tuple[str, str]]:
     devices = rs_utils.list_devices()
     if not devices:
-        raise RuntimeError("未检测到 RealSense 相机。")
+        if required:
+            raise RuntimeError("未检测到 RealSense 相机。")
+        return []
     print("已连接 RealSense 相机：")
     for name, sn in devices:
         print(f"  {name}  (序列号: {sn})")
@@ -409,8 +415,12 @@ def _init_cameras(
     capture_width: int,
     capture_height: int,
     fps: int,
-) -> tuple[list, list[_CameraReader], int, int, int]:
-    devices = _list_realsense_devices()
+    *,
+    required: bool = True,
+) -> tuple[list, list[_CameraReader], int, int, int] | None:
+    devices = _list_realsense_devices(required=required)
+    if not devices:
+        return None
     main_serial, aux_serial = _auto_resolve_camera_serials(devices, main_serial, aux_serial, no_pip)
 
     if aux_serial:
@@ -456,8 +466,11 @@ def _init_cameras(
     return pipelines, readers, capture_width, capture_height, fps
 
 
-def _run_teleop_loop(stop_signal: threading.Event) -> None:
-    print("遥操作已启动 — 按住 Grip 移动机械臂，X/Y 控制 BC 录制（Ctrl+C 退出）。")
+def _run_teleop_loop(stop_signal: threading.Event, *, enable_recording: bool) -> None:
+    if enable_recording:
+        print("遥操作已启动 — 按住 Grip 移动机械臂，X/Y 控制 BC 录制（Ctrl+C 退出）。")
+    else:
+        print("遥操作已启动 — 按住 Grip 移动机械臂（无相机 / BC 录制已关闭，Ctrl+C 退出）。")
     try:
         while not stop_signal.is_set():
             time.sleep(0.1)
@@ -485,6 +498,8 @@ def main(
     record_save_pip: bool = True,
     record_auto_reset: bool = True,
     policy_mode: bool = False,
+    no_camera: bool = False,
+    require_camera: bool = False,
 ) -> None:
     if controller_side == "left":
         manipulator_config = LEFT_CONTROLLER_MANIPULATOR_CONFIG
@@ -558,17 +573,38 @@ def main(
         )
         arm_controller.calc_target_joint_position()
 
-        pipelines, readers, capture_width, capture_height, fps = _init_cameras(
-            main_serial, use_aux_serial, no_pip, capture_width, capture_height, fps
-        )
-        cameras_ready = True
-        quality_labels = {"low": "低", "balanced": "均衡", "high": "高"}
-        print(f"采集画质：{quality_labels.get(quality, quality)}  {capture_width}x{capture_height} @ {fps}fps")
+        camera_required = require_camera and not no_camera
+        if no_camera:
+            print("无相机模式（--no-camera）：跳过 RealSense 初始化。")
+        else:
+            camera_setup = _init_cameras(
+                main_serial,
+                use_aux_serial,
+                no_pip,
+                capture_width,
+                capture_height,
+                fps,
+                required=camera_required,
+            )
+            if camera_setup is None:
+                print(
+                    "警告：未检测到 RealSense 相机，以无相机模式继续（仅机械臂遥操作）。",
+                    file=sys.stderr,
+                )
+            else:
+                pipelines, readers, capture_width, capture_height, fps = camera_setup
+                cameras_ready = True
+                quality_labels = {"low": "低", "balanced": "均衡", "high": "高"}
+                print(f"采集画质：{quality_labels.get(quality, quality)}  {capture_width}x{capture_height} @ {fps}fps")
 
-        health_labels = ["主相机"]
-        if len(readers) > 1:
-            health_labels.append("辅相机")
-        _run_camera_health_monitor(readers, health_labels, stop_signal, interval_s=camera_health_interval)
+                health_labels = ["主相机"]
+                if len(readers) > 1:
+                    health_labels.append("辅相机")
+                _run_camera_health_monitor(readers, health_labels, stop_signal, interval_s=camera_health_interval)
+
+        if not cameras_ready and enable_recording:
+            print("警告：无相机时无法 BC 录制，已自动关闭。", file=sys.stderr)
+            enable_recording = False
 
         arm_threads = _start_arm_threads(arm_controller, stop_signal)
 
@@ -584,7 +620,7 @@ def main(
             bc_recorder.start(stop_signal)
             print(f"BC 录制已开启，{record_fps}Hz → {bc_config.save_dir}")
 
-        _run_teleop_loop(stop_signal)
+        _run_teleop_loop(stop_signal, enable_recording=enable_recording)
 
     except RuntimeError as exc:
         print(exc, file=sys.stderr)
