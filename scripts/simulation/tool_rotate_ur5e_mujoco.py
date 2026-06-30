@@ -7,6 +7,10 @@ Usage:
   python scripts/simulation/tool_rotate_ur5e_mujoco.py
   python scripts/simulation/tool_rotate_ur5e_mujoco.py --angle-deg 10 --pose-name POSE_1
   python scripts/simulation/tool_rotate_ur5e_mujoco.py --angle-deg -30 --steps 40
+
+Viewer (after first play):
+  Space / R  replay rotation
+  H          jump to rotation start pose
 """
 
 from __future__ import annotations
@@ -16,6 +20,7 @@ import json
 import os
 import sys
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
 import mujoco
@@ -273,6 +278,86 @@ def update_trajectory_scene(
     viewer.user_scn.ngeom = geom_index
 
 
+@dataclass
+class ViewerControls:
+    replay_requested: bool = False
+    jump_to_start_requested: bool = False
+    is_playing: bool = False
+
+
+def make_viewer_key_callback(controls: ViewerControls):
+    def key_callback(keycode: int) -> None:
+        key = chr(keycode)
+        if key in {" ", "r", "R"}:
+            controls.replay_requested = True
+        elif key in {"h", "H"}:
+            controls.jump_to_start_requested = True
+
+    return key_callback
+
+
+def snapshot_mujoco_qpos(mj_data: mujoco.MjData) -> np.ndarray:
+    return mj_data.qpos.copy()
+
+
+def apply_mujoco_qpos(mj_model: mujoco.MjModel, mj_data: mujoco.MjData, qpos: np.ndarray) -> None:
+    mj_data.qpos[:] = qpos
+    mj_data.ctrl[:] = calc_mujoco_ctrl_from_qpos(mj_model, qpos)
+    mujoco.mj_forward(mj_model, mj_data)
+
+
+def setup_viewer_camera(viewer, tool_center_base: np.ndarray) -> None:
+    scene_center = np.array([0.25, 0.0, 0.35])
+    lookat = 0.35 * scene_center + 0.65 * tool_center_base
+    viewer.cam.type = mujoco.mjtCamera.mjCAMERA_FREE
+    viewer.cam.azimuth = 135
+    viewer.cam.elevation = -28
+    viewer.cam.distance = max(3.5, float(np.linalg.norm(lookat) + 2.0))
+    viewer.cam.lookat = lookat
+
+
+def animate_qpos_path(
+    viewer,
+    mj_model: mujoco.MjModel,
+    mj_data: mujoco.MjData,
+    qpos_path: list[np.ndarray],
+    start_tcp_xyz: np.ndarray,
+    planned_tcp_path: np.ndarray,
+    tool_center_base: np.ndarray,
+    *,
+    step_pause_s: float,
+    sim_substeps: int,
+    show_trajectory: bool,
+    show_tool_center_ring: bool,
+) -> list[np.ndarray]:
+    """Play back a recorded joint-space path and return executed TCP xyz samples."""
+    executed_tcp_path: list[np.ndarray] = [start_tcp_xyz.copy()]
+
+    for qpos in qpos_path[1:]:
+        if not viewer.is_running():
+            break
+
+        apply_mujoco_qpos(mj_model, mj_data, qpos)
+        executed_tcp_path.append(mujoco_body_to_ur_pose(mj_model, mj_data, _EE_LINK)[:3].copy())
+
+        for _ in range(sim_substeps):
+            if not viewer.is_running():
+                break
+            mujoco.mj_step(mj_model, mj_data)
+            if show_trajectory:
+                update_trajectory_scene(
+                    viewer,
+                    planned_tcp_path,
+                    np.asarray(executed_tcp_path),
+                    tool_center_base,
+                    show_tool_center_ring=show_tool_center_ring,
+                )
+            viewer.sync()
+            time.sleep(step_pause_s)
+
+    return executed_tcp_path
+
+
 def main(
     xml_path: str = os.path.join(ASSET_PATH, "universal_robots_ur5e/scene.xml"),
     robot_urdf_path: str = os.path.join(ASSET_PATH, "universal_robots_ur5e/ur5e.urdf"),
@@ -286,6 +371,8 @@ def main(
     use_home: bool = False,
     show_trajectory: bool = True,
     show_tool_center_ring: bool = True,
+    auto_play: bool = True,
+    sim_substeps: int = 3,
 ) -> None:
     """Simulate virtual-tool-center rotation in MuJoCo.
 
@@ -293,6 +380,7 @@ def main(
         pose_name: Recorded pose from tool_tcp_rotate.json used as rotation start.
         use_home: If True, ignore pose_file and start from MJCF home keyframe.
         tool_offset_tcp_m: Override TOOL_OFFSET_TCP_M from tool_rotate.py.
+        auto_play: Play once when the viewer opens. Use Space/R to replay later.
     """
     tool_rotate = _load_tool_rotate_module()
     tool_offset = (
@@ -375,65 +463,75 @@ def main(
     print()
 
     planned_tcp_path = tcp_positions_from_waypoints(waypoints)
-    executed_tcp_path: list[np.ndarray] = [start_tcp_pose[:3].copy()]
+    rotation_qpos_keyframes: list[np.ndarray] = []
 
     set_mocap_position(mj_model, mj_data, _MOCAP_TOOL_CENTER, tool_center_base)
 
+    # Pre-compute IK and record joint keyframes before opening the viewer.
+    rotation_start_qpos = snapshot_mujoco_qpos(mj_data)
+    rotation_qpos_keyframes.append(rotation_start_qpos.copy())
+
     failed_steps = 0
-    with mj_viewer.launch_passive(mj_model, mj_data) as viewer:
-        # 看向基座与工具中心之间，并拉远一些；避免一打开窗口只能看到局部/空白。
-        scene_center = np.array([0.25, 0.0, 0.35])
-        lookat = 0.35 * scene_center + 0.65 * tool_center_base
-        viewer.cam.type = mujoco.mjtCamera.mjCAMERA_FREE
-        viewer.cam.azimuth = 135
-        viewer.cam.elevation = -28
-        viewer.cam.distance = max(3.5, float(np.linalg.norm(lookat) + 2.0))
-        viewer.cam.lookat = lookat
+    for index, target_pose in enumerate(waypoints[1:], start=1):
+        if not solve_tcp_ik(solver, frame_task, joints_task, placo_robot, target_pose):
+            failed_steps += 1
+            print(f"WARNING: IK failed at waypoint {index}/{len(waypoints) - 1}", file=sys.stderr)
+        sync_mujoco_from_placo(mj_model, mj_data, placo_robot)
+        rotation_qpos_keyframes.append(snapshot_mujoco_qpos(mj_data))
+
+    final_qpos = rotation_qpos_keyframes[-1]
+    apply_mujoco_qpos(mj_model, mj_data, final_qpos)
+    actual_pose = mujoco_body_to_ur_pose(mj_model, mj_data, _EE_LINK)
+    actual_drift_mm = tool_rotate.verify_tool_center(actual_pose, tool_offset, tool_center_base)
+
+    print("=== Planned Result (IK) ===")
+    print(f"final_tcp_pose: {actual_pose}")
+    print(f"planned TCP xyz delta mm: {np.linalg.norm(actual_pose[:3] - start_tcp_pose[:3]) * 1000.0:.3f}")
+    print(f"planned tool center drift mm: {actual_drift_mm:.3f}")
+    if failed_steps:
+        print(f"IK failures: {failed_steps}/{len(waypoints) - 1}", file=sys.stderr)
+    print()
+    print("Viewer controls: Space/R = replay, H = jump to start pose")
+    print("Close viewer window to exit.")
+    print()
+
+    controls = ViewerControls()
+    executed_tcp_path: list[np.ndarray] = [start_tcp_pose[:3].copy()]
+
+    with mj_viewer.launch_passive(
+        mj_model,
+        mj_data,
+        key_callback=make_viewer_key_callback(controls),
+    ) as viewer:
+        setup_viewer_camera(viewer, tool_center_base)
         viewer.sync()
 
-        if show_trajectory:
-            update_trajectory_scene(
+        if auto_play:
+            controls.is_playing = True
+            executed_tcp_path = animate_qpos_path(
                 viewer,
+                mj_model,
+                mj_data,
+                rotation_qpos_keyframes,
+                start_tcp_pose[:3],
                 planned_tcp_path,
-                np.asarray(executed_tcp_path),
                 tool_center_base,
+                step_pause_s=step_pause_s,
+                sim_substeps=sim_substeps,
+                show_trajectory=show_trajectory,
                 show_tool_center_ring=show_tool_center_ring,
             )
-            viewer.sync()
+            controls.is_playing = False
 
-        for index, target_pose in enumerate(waypoints[1:], start=1):
-            if not solve_tcp_ik(solver, frame_task, joints_task, placo_robot, target_pose):
-                failed_steps += 1
-                print(f"WARNING: IK failed at waypoint {index}/{len(waypoints) - 1}", file=sys.stderr)
-
-            sync_mujoco_from_placo(mj_model, mj_data, placo_robot)
-            executed_tcp_path.append(mujoco_body_to_ur_pose(mj_model, mj_data, _EE_LINK)[:3].copy())
-
-            for _ in range(3):
-                mujoco.mj_step(mj_model, mj_data)
-                if show_trajectory:
-                    update_trajectory_scene(
-                        viewer,
-                        planned_tcp_path,
-                        np.asarray(executed_tcp_path),
-                        tool_center_base,
-                        show_tool_center_ring=show_tool_center_ring,
-                    )
-                viewer.sync()
-                time.sleep(step_pause_s)
-
-        actual_pose = mujoco_body_to_ur_pose(mj_model, mj_data, _EE_LINK)
-        actual_drift_mm = tool_rotate.verify_tool_center(actual_pose, tool_offset, tool_center_base)
-
-        print("=== Result ===")
-        print(f"final_tcp_pose: {actual_pose}")
-        print(f"actual TCP xyz delta mm: {np.linalg.norm(actual_pose[:3] - start_tcp_pose[:3]) * 1000.0:.3f}")
-        print(f"actual tool center drift mm: {actual_drift_mm:.3f}")
-        if failed_steps:
-            print(f"IK failures: {failed_steps}/{len(waypoints) - 1}", file=sys.stderr)
-
-        print("Close viewer window to exit.")
-        while viewer.is_running():
+            actual_pose = mujoco_body_to_ur_pose(mj_model, mj_data, _EE_LINK)
+            actual_drift_mm = tool_rotate.verify_tool_center(actual_pose, tool_offset, tool_center_base)
+            print("=== Playback Result ===")
+            print(f"final_tcp_pose: {actual_pose}")
+            print(f"actual TCP xyz delta mm: {np.linalg.norm(actual_pose[:3] - start_tcp_pose[:3]) * 1000.0:.3f}")
+            print(f"actual tool center drift mm: {actual_drift_mm:.3f}")
+            print("Press Space/R to replay.")
+        else:
+            apply_mujoco_qpos(mj_model, mj_data, rotation_start_qpos)
             if show_trajectory:
                 update_trajectory_scene(
                     viewer,
@@ -443,7 +541,45 @@ def main(
                     show_tool_center_ring=show_tool_center_ring,
                 )
             viewer.sync()
-            time.sleep(0.05)
+            print("Auto-play disabled. Press Space/R to play.")
+
+        while viewer.is_running():
+            if controls.jump_to_start_requested and not controls.is_playing:
+                controls.jump_to_start_requested = False
+                apply_mujoco_qpos(mj_model, mj_data, rotation_start_qpos)
+                executed_tcp_path = [start_tcp_pose[:3].copy()]
+
+            if controls.replay_requested and not controls.is_playing:
+                controls.replay_requested = False
+                controls.is_playing = True
+                apply_mujoco_qpos(mj_model, mj_data, rotation_start_qpos)
+                executed_tcp_path = animate_qpos_path(
+                    viewer,
+                    mj_model,
+                    mj_data,
+                    rotation_qpos_keyframes,
+                    start_tcp_pose[:3],
+                    planned_tcp_path,
+                    tool_center_base,
+                    step_pause_s=step_pause_s,
+                    sim_substeps=sim_substeps,
+                    show_trajectory=show_trajectory,
+                    show_tool_center_ring=show_tool_center_ring,
+                )
+                controls.is_playing = False
+                print("Replay finished. Press Space/R to replay again.")
+
+            if show_trajectory and not controls.is_playing:
+                update_trajectory_scene(
+                    viewer,
+                    planned_tcp_path,
+                    np.asarray(executed_tcp_path),
+                    tool_center_base,
+                    show_tool_center_ring=show_tool_center_ring,
+                )
+
+            viewer.sync()
+            time.sleep(0.03)
 
 
 if __name__ == "__main__":
