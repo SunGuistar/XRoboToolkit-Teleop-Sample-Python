@@ -24,8 +24,8 @@
 
 手柄操作（默认 controller_side=right）：
   - 按住 Grip：移动机械臂（人工操作始终优先于策略）
-  - A：启用 3DOF 约束（世界系：锁高度 z 与 rx/ry，仅 x/y/偏航 rz 可动）
-  - B：关闭 3DOF 约束并清除参考
+  - A：启用约束（锁 z/rx/ry，仅 x/y/rz 可动）
+  - B：关闭约束并清除参考
   - X：开始/停止 BC 录制（停止后自动保存并回 Home）
   - Y：丢弃当前录制（并回 Home）
 
@@ -575,7 +575,7 @@ def main(
         side_label = "左手柄" if controller_side == "left" else "右手柄"
         print(
             f"单臂遥操作：robot_ip={robot_ip}，{side_label}。"
-            "按住 Grip 移动机械臂；A 启用 3DOF 约束，B 关闭。"
+            "按住 Grip 移动机械臂；A 启用 z/rx/ry 约束，B 关闭。"
         )
         arm_controller.calc_target_joint_position()
 

@@ -1,8 +1,10 @@
-"""World-frame 3-DOF hard constraint for UR teleoperation (wrench turning).
+"""World-frame constraint for UR teleoperation (wrench turning).
 
 Reference pose is recorded at the flange on A-press, but constraints use world axes:
   free  — x, y, rz (horizontal translation + yaw)
   locked — z, rx, ry (height + pitch/roll)
+
+B releases all constraints.
 """
 
 from __future__ import annotations
@@ -126,8 +128,12 @@ def project_pose_3dof_world(
     return t_cmd
 
 
+# Backward-compatible alias.
+project_pose_z_lock = project_pose_3dof_world
+
+
 class SoftConstraintTeleopHelper:
-    """3-DOF world constraint: user controls x/y/rz; z/rx/ry locked to A-button reference."""
+    """World constraint: user controls x/y/rz; z/rx/ry locked to A-button reference."""
 
     def __init__(self, **_kwargs):
         self.state = SoftConstraintState()
@@ -159,6 +165,7 @@ class SoftConstraintTeleopHelper:
         b_pressed: bool,
         placo_robot,
         resync_active_grip: Callable[[], None] | None = None,
+        flange_if_gripping: np.ndarray | None = None,
     ) -> None:
         if a_pressed and not self._prev_a_button:
             t_flange = placo_robot.get_T_world_frame("flange")
@@ -169,14 +176,16 @@ class SoftConstraintTeleopHelper:
             self.state.rx_ref = float(pose6[3])
             self.state.ry_ref = float(pose6[4])
             self.reset_motion_state()
+            if flange_if_gripping is not None:
+                self.set_grip_start(flange_if_gripping)
             print(
-                "3DOF 约束已启用（世界系）— 仅 x/y/rz 可动，z/rx/ry 锁定 — "
+                "约束已启用 — 锁 z/rx/ry，仅 x/y/rz 可动 — "
                 f"z_ref={pose6[2]:.4f}, rx_ref={pose6[3]:.4f}, ry_ref={pose6[4]:.4f}"
             )
 
         if b_pressed and not self._prev_b_button:
             if self.state.active:
-                print("3DOF 约束已关闭，参考已清除。")
+                print("约束已关闭，参考已清除。")
             self.state.active = False
             self.state.T_ref_flange = None
             self.state.z_ref = 0.0
