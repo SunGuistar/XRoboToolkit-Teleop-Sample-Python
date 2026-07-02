@@ -24,6 +24,8 @@
 
 手柄操作（默认 controller_side=right）：
   - 按住 Grip：移动机械臂（人工操作始终优先于策略）
+  - A：启用 3DOF 约束（世界系：锁高度 z 与 rx/ry，仅 x/y/偏航 rz 可动）
+  - B：关闭 3DOF 约束并清除参考
   - X：开始/停止 BC 录制（停止后自动保存并回 Home）
   - Y：丢弃当前录制（并回 Home）
 
@@ -68,9 +70,10 @@ from xrobotoolkit_teleop.hardware.interface.universal_robots import (
     LEFT_ROBOT_IP,
     RIGHT_ROBOT_IP,
 )
+from xrobotoolkit_teleop.utils.geometry import calibrate_R_headset_world
 from xrobotoolkit_teleop.hardware.single_arm_ur_controller import (
-    LEFT_CONTROLLER_MANIPULATOR_CONFIG,
-    RIGHT_CONTROLLER_MANIPULATOR_CONFIG,
+    FLANGE_CONTROLLER_MANIPULATOR_CONFIG,
+    LEFT_FLANGE_CONTROLLER_MANIPULATOR_CONFIG,
     SingleArmURController,
 )
 
@@ -502,11 +505,11 @@ def main(
     require_camera: bool = False,
 ) -> None:
     if controller_side == "left":
-        manipulator_config = LEFT_CONTROLLER_MANIPULATOR_CONFIG
+        manipulator_config = LEFT_FLANGE_CONTROLLER_MANIPULATOR_CONFIG
         if robot_ip == DEFAULT_ROBOT_IP:
             robot_ip = LEFT_ROBOT_IP
     else:
-        manipulator_config = RIGHT_CONTROLLER_MANIPULATOR_CONFIG
+        manipulator_config = FLANGE_CONTROLLER_MANIPULATOR_CONFIG
 
     if save_home:
         _save_home_from_robot(robot_ip, manipulator_config)
@@ -528,6 +531,7 @@ def main(
     capture_height = preset["height"]
 
     xr_client = XrClient()
+    r_headset_world = calibrate_R_headset_world(xr_client)
     arm_controller: SingleArmURController | None = None
     bc_recorder: BCEpisodeRecorder | None = None
     stop_signal = threading.Event()
@@ -561,6 +565,8 @@ def main(
             visualize_placo=visual,
             policy_mode=policy_mode,
             bc_config=bc_config,
+            enable_soft_constraint=True,
+            R_headset_world=r_headset_world,
         )
         print(f"Home 关节角（度）：{_format_joint_deg(home_joint_deg)}")
 
@@ -569,7 +575,7 @@ def main(
         side_label = "左手柄" if controller_side == "left" else "右手柄"
         print(
             f"单臂遥操作：robot_ip={robot_ip}，{side_label}。"
-            "按住 Grip 移动机械臂。"
+            "按住 Grip 移动机械臂；A 启用 3DOF 约束，B 关闭。"
         )
         arm_controller.calc_target_joint_position()
 

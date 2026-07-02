@@ -38,6 +38,12 @@ from xrobotoolkit_teleop.utils.parallel_gripper_utils import (
 from xrobotoolkit_teleop.bc.config import BCConfig
 from xrobotoolkit_teleop.bc.gripper_norm import trigger_to_gripper_cmd
 from xrobotoolkit_teleop.bc.policy import BCPolicy, apply_policy_action
+from xrobotoolkit_teleop.hardware.soft_constraint import (
+    DEFAULT_DZ_DAMP,
+    DEFAULT_KR,
+    DEFAULT_KZ,
+    SoftConstraintTeleopHelper,
+)
 from xrobotoolkit_teleop.utils.path_utils import ASSET_PATH
 
 DEFAULT_SINGLE_ARM_URDF_PATH = os.path.join(ASSET_PATH, "universal_robots_ur5e/ur5e.urdf")
@@ -59,6 +65,24 @@ RIGHT_CONTROLLER_MANIPULATOR_CONFIG = {
         "pose_source": "right_controller",
         "control_trigger": "right_grip",
         "gripper_trigger": "right_trigger",
+    },
+}
+
+FLANGE_CONTROLLER_MANIPULATOR_CONFIG = {
+    "arm": {
+        "link_name": "flange",
+        "pose_source": "right_controller",
+        "control_trigger": "right_grip",
+        "gripper_trigger": "right_trigger",
+    },
+}
+
+LEFT_FLANGE_CONTROLLER_MANIPULATOR_CONFIG = {
+    "arm": {
+        "link_name": "flange",
+        "pose_source": "left_controller",
+        "control_trigger": "left_grip",
+        "gripper_trigger": "left_trigger",
     },
 }
 
@@ -93,6 +117,10 @@ class SingleArmURController:
         dh_gripper_standard_position: bool = False,
         policy_mode: bool = False,
         bc_config: BCConfig | None = None,
+        enable_soft_constraint: bool = False,
+        soft_constraint_kz: float = DEFAULT_KZ,
+        soft_constraint_kr: float = DEFAULT_KR,
+        soft_constraint_dz_damp: float = DEFAULT_DZ_DAMP,
     ):
         self.xr_client = xr_client
         self.robot_urdf_path = robot_urdf_path
@@ -172,6 +200,12 @@ class SingleArmURController:
         self._policy_image: np.ndarray | None = None
         self._policy_image_lock = threading.Lock()
         self._reset_in_progress = False
+        self.enable_soft_constraint = enable_soft_constraint
+        self._soft_constraint = SoftConstraintTeleopHelper(
+            kz=soft_constraint_kz,
+            kr=soft_constraint_kr,
+            dz_damp=soft_constraint_dz_damp,
+        )
         for name, config in self.manipulator_config.items():
             self.effector_task[name].T_world_frame = self.placo_robot.get_T_world_frame(config["link_name"])
 
@@ -220,6 +254,60 @@ class SingleArmURController:
             delta_xyz = (controller_xyz - self.init_controller_xyz[arm_name]) * self.scale_factor
             delta_rot = quat_diff_as_angle_axis(self.init_controller_quat[arm_name], controller_quat)
         return delta_xyz, delta_rot
+
+    def _get_processed_controller_pose(self, xr_pose) -> tuple[np.ndarray, np.ndarray]:
+        controller_xyz = np.array([xr_pose[0], xr_pose[1], xr_pose[2]])
+        controller_quat = np.array(
+            [
+                xr_pose[6],
+                xr_pose[3],
+                xr_pose[4],
+                xr_pose[5],
+            ]
+        )
+        controller_xyz = self.R_headset_world @ controller_xyz
+        R_transform = np.eye(4)
+        R_transform[:3, :3] = self.R_headset_world
+        R_quat = tf.quaternion_from_matrix(R_transform)
+        controller_quat = tf.quaternion_multiply(
+            tf.quaternion_multiply(R_quat, controller_quat),
+            tf.quaternion_conjugate(R_quat),
+        )
+        return controller_xyz, controller_quat
+
+    def _resync_cumulative_teleop_after_soft_off(self) -> None:
+        for name, config in self.manipulator_config.items():
+            xr_grip_val = self.xr_client.get_key_value_by_name(config["control_trigger"])
+            if xr_grip_val > (1.0 - CONTROLLER_DEADZONE):
+                T_world_ee = self.placo_robot.get_T_world_frame(config["link_name"])
+                self.init_ee_xyz[name] = T_world_ee[:3, 3].copy()
+                self.init_ee_quat[name] = tf.quaternion_from_matrix(T_world_ee)
+                self.init_controller_xyz[name] = None
+                self.init_controller_quat[name] = None
+
+    def _update_soft_constraint_buttons(self) -> None:
+        if not self.enable_soft_constraint:
+            return
+        self._soft_constraint.update_buttons(
+            a_pressed=self.xr_client.get_button_state_by_name("A"),
+            b_pressed=self.xr_client.get_button_state_by_name("B"),
+            placo_robot=self.placo_robot,
+            resync_active_grip=self._resync_cumulative_teleop_after_soft_off,
+        )
+
+    def _compute_soft_constraint_target(
+        self,
+        name: str,
+        config: dict,
+        xr_pose,
+        init_xyz: np.ndarray,
+        init_quat: np.ndarray,
+    ) -> np.ndarray:
+        delta_xyz, delta_rot = self._process_xr_pose(xr_pose, name)
+        target_xyz, target_quat = apply_delta_pose(init_xyz, init_quat, delta_xyz, delta_rot)
+        t_user = tf.quaternion_matrix(target_quat)
+        t_user[:3, 3] = target_xyz
+        return self._soft_constraint.project_target(t_user)
 
     def set_policy(self, policy: BCPolicy | None) -> None:
         """Attach a BC policy for deployment (policy_mode must be True)."""
@@ -298,6 +386,7 @@ class SingleArmURController:
         current_q = self.robot_controller.get_current_joint_positions()
         self.placo_robot.state.q[PLACO_ARM_Q_SLICE] = current_q
         self.placo_robot.update_kinematics()
+        self._update_soft_constraint_buttons()
 
         human_control_active = False
         for name, config in self.manipulator_config.items():
@@ -326,19 +415,32 @@ class SingleArmURController:
                         f"{name} activated. Current EE xyz: {self.init_ee_xyz[name]}, "
                         f"quat: {self.init_ee_quat[name]}."
                     )
+                    if self.enable_soft_constraint and self._soft_constraint.active:
+                        self._soft_constraint.set_grip_start(
+                            self.placo_robot.get_T_world_frame(config["link_name"])
+                        )
 
                 xr_pose = self.xr_client.get_pose_by_name(config["pose_source"])
-                delta_xyz, delta_rot_angle_axis = self._process_xr_pose(xr_pose, name)
 
-                target_xyz, target_quat = apply_delta_pose(
-                    self.init_ee_xyz[name],
-                    self.init_ee_quat[name],
-                    delta_xyz,
-                    delta_rot_angle_axis,
-                )
+                if self.enable_soft_constraint and self._soft_constraint.active:
+                    target_transform = self._compute_soft_constraint_target(
+                        name,
+                        config,
+                        xr_pose,
+                        self.init_ee_xyz[name],
+                        self.init_ee_quat[name],
+                    )
+                else:
+                    delta_xyz, delta_rot_angle_axis = self._process_xr_pose(xr_pose, name)
+                    target_xyz, target_quat = apply_delta_pose(
+                        self.init_ee_xyz[name],
+                        self.init_ee_quat[name],
+                        delta_xyz,
+                        delta_rot_angle_axis,
+                    )
+                    target_transform = tf.quaternion_matrix(target_quat)
+                    target_transform[:3, 3] = target_xyz
 
-                target_transform = tf.quaternion_matrix(target_quat)
-                target_transform[:3, 3] = target_xyz
                 self.effector_task[name].T_world_frame = target_transform
 
             else:
@@ -348,6 +450,7 @@ class SingleArmURController:
                     self.init_ee_quat[name] = None
                     self.init_controller_xyz[name] = None
                     self.init_controller_quat[name] = None
+                self._soft_constraint.reset_motion_state()
                 T_world_ee_current = self.placo_robot.get_T_world_frame(config["link_name"])
                 self.effector_task[name].T_world_frame = T_world_ee_current
 
@@ -440,6 +543,7 @@ class SingleArmURController:
                 self.init_controller_xyz[name] = None
                 self.init_controller_quat[name] = None
                 self.effector_task[name].T_world_frame = self.placo_robot.get_T_world_frame(config["link_name"])
+            self._soft_constraint.clear_all()
         finally:
             with self._control_lock:
                 self._reset_in_progress = False
