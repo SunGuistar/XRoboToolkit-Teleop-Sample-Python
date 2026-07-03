@@ -1,5 +1,11 @@
+import time
+from typing import TYPE_CHECKING
+
 import numpy as np
 import meshcat.transformations as tf
+
+if TYPE_CHECKING:
+    from xrobotoolkit_teleop.common.xr_client import XrClient
 
 R_HEADSET_TO_WORLD = np.array(
     [
@@ -8,6 +14,38 @@ R_HEADSET_TO_WORLD = np.array(
         [0, 1, 0],
     ]
 )
+
+
+def calibrate_R_headset_world(xr_client: "XrClient", timeout_s: float = 10.0) -> np.ndarray:
+    """Wait for live XR tracking and return SDK tracking frame → robot world rotation.
+
+    Headset/controller poses share the tracking origin created when the VR app starts.
+    Teleop maps that frame to the UR/placo world (Z up) via a fixed axis remap.
+    MuJoCo and hardware must both call this after ``XrClient()`` so they use the live
+    session frame instead of a synthetic origin.
+    """
+    deadline = time.monotonic() + timeout_s
+    headset_pose = None
+    while time.monotonic() < deadline:
+        head = xr_client.get_pose_by_name("headset")
+        pos = np.asarray(head[:3], dtype=np.float64)
+        quat = np.array([head[6], head[3], head[4], head[5]], dtype=np.float64)
+        if np.all(np.isfinite(pos)) and is_valid_quaternion(quat):
+            headset_pose = head
+            break
+        time.sleep(0.05)
+
+    if headset_pose is None:
+        raise RuntimeError(
+            "XR tracking unavailable. Start the PICO VR app and PC-Service, then retry teleop."
+        )
+
+    pos = headset_pose[:3]
+    print(
+        "XR 追踪原点已绑定（VR 应用启动时建立）— 头显位姿: "
+        f"xyz=({pos[0]:.3f}, {pos[1]:.3f}, {pos[2]:.3f})"
+    )
+    return R_HEADSET_TO_WORLD.copy()
 
 
 def is_valid_quaternion(quat, tol=1e-6):
