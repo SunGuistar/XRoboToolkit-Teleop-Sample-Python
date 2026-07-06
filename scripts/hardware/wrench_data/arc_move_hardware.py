@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Execute horizontal arc motion on UR5 hardware via RTDE moveL waypoints.
+"""Execute horizontal arc motion on UR5 hardware via RTDE movePath (moveL + blend).
 
 The rotation axis is vertical (world Z) and passes through RECORD_假定的工具TCP xy in tool_tcp.json.
 
 Usage:
   python scripts/hardware/wrench_data/arc_move_hardware.py --angle-deg 60
   python scripts/hardware/wrench_data/arc_move_hardware.py --orientation-mode FOLLOW_ARC
+  python scripts/hardware/wrench_data/arc_move_hardware.py --blend 0.012
   python scripts/hardware/wrench_data/arc_move_hardware.py --move-home-first
 """
 
@@ -17,6 +18,7 @@ import time
 from pathlib import Path
 
 import numpy as np
+import rtde_control
 import tyro
 
 from xrobotoolkit_teleop.hardware.interface.universal_robots import connect_rtde, DEFAULT_ROBOT_IP
@@ -54,6 +56,23 @@ def wait_until_stopped(rtde_r, timeout_s: float = 120.0, poll_s: float = 0.05) -
     raise TimeoutError("Timed out waiting for robot to stop.")
 
 
+def build_movel_path(
+    waypoints: list[np.ndarray],
+    velocity: float,
+    acceleration: float,
+    blend: float,
+) -> rtde_control.Path:
+    """Build a moveL path with blend on interior waypoints (last waypoint blend=0)."""
+    path = rtde_control.Path()
+    rows: list[list[float]] = []
+    last_index = len(waypoints) - 1
+    for index, pose in enumerate(waypoints):
+        blend_radius = 0.0 if index == last_index else blend
+        rows.append([*pose.tolist(), velocity, acceleration, blend_radius])
+    path.appendMovelPath(rows)
+    return path
+
+
 def main(
     robot_ip: str = DEFAULT_ROBOT_IP,
     tool_tcp_file: Path = DEFAULT_TOOL_TCP_FILE,
@@ -64,6 +83,7 @@ def main(
     acceleration: float = 0.2,
     velocity: float = 0.03,
     steps: int = 30,
+    blend: float = 0.012,
     move_home_first: bool = False,
     dry_run: bool = False,
 ) -> None:
@@ -101,15 +121,15 @@ def main(
         print_pre_motion_info(plan)
 
         waypoints = generate_arc_waypoints(plan, steps=max(steps, 2))
-        print(f"moveL waypoints: {len(waypoints)}")
+        movel_path = build_movel_path(waypoints, velocity, acceleration, blend)
+        print(f"movePath waypoints: {len(waypoints)}, blend_m: {blend:.4f} (interior), 0.0 (final)")
 
         if dry_run:
-            print("Dry run: moveL skipped.")
+            print("Dry run: movePath skipped.")
             return
 
-        for index, pose in enumerate(waypoints, start=1):
-            if not rtde_c.moveL(pose.tolist(), velocity, acceleration):
-                raise RuntimeError(f"moveL failed at waypoint {index}/{len(waypoints)}.")
+        if not rtde_c.movePath(movel_path):
+            raise RuntimeError("movePath failed.")
 
         wait_until_stopped(rtde_r)
         actual_tcp = np.asarray(rtde_r.getActualTCPPose(), dtype=np.float64).reshape(6)
