@@ -51,6 +51,7 @@ from arc_motion import (
     print_pre_motion_info,
     rotvec_to_matrix,
 )
+from record_home import load_home_joints
 
 _EE_LINK = "tool0"
 _UR5E_JOINT_MAP = (
@@ -307,6 +308,7 @@ def main(
     robot_urdf_path: str = os.path.join(ASSET_PATH, "universal_robots_ur5e/ur5e.urdf"),
     tool_tcp_file: Path = DEFAULT_TOOL_TCP_FILE,
     home_file: Path = DEFAULT_HOME_FILE,
+    home_record_name: str | None = None,
     record_name: str = "RECORD_1",
     angle_deg: float = 60.0,
     orientation_mode: OrientationMode = OrientationMode.FOLLOW_ARC,
@@ -328,9 +330,7 @@ def main(
                 f"Home file not found: {home_file}\n"
                 "Run on hardware: python scripts/hardware/wrench_data/record_home.py"
             )
-        with home_file.open(encoding="utf-8") as handle:
-            home_data = json.load(handle)
-        set_mujoco_home_joints(mj_model, mj_data, np.asarray(home_data["joint_q_rad"], dtype=float))
+        set_mujoco_home_joints(mj_model, mj_data, load_home_joints(home_file, home_record_name))
 
     placo_robot = placo.RobotWrapper(robot_urdf_path)
     solver = placo.KinematicsSolver(placo_robot)

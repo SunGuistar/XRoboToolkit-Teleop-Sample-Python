@@ -12,7 +12,6 @@ Usage:
 
 from __future__ import annotations
 
-import json
 import sys
 import time
 from pathlib import Path
@@ -36,14 +35,7 @@ from arc_motion import (
     print_post_motion_errors,
     print_pre_motion_info,
 )
-
-
-def load_home_joints(home_file: Path) -> np.ndarray:
-    with home_file.open(encoding="utf-8") as handle:
-        data = json.load(handle)
-    if "joint_q_rad" not in data:
-        raise KeyError(f"home file missing joint_q_rad: {home_file}")
-    return np.asarray(data["joint_q_rad"], dtype=np.float64).reshape(6)
+from record_home import load_home_joints
 
 
 def wait_until_stopped(rtde_r, timeout_s: float = 120.0, poll_s: float = 0.05) -> None:
@@ -77,6 +69,7 @@ def main(
     robot_ip: str = DEFAULT_ROBOT_IP,
     tool_tcp_file: Path = DEFAULT_TOOL_TCP_FILE,
     home_file: Path = DEFAULT_HOME_FILE,
+    home_record_name: str | None = None,
     record_name: str = DEFAULT_RECORD_NAME,
     angle_deg: float = 60.0,
     orientation_mode: OrientationMode = OrientationMode.FOLLOW_ARC,
@@ -99,7 +92,7 @@ def main(
                     f"Home file not found: {home_file}\n"
                     "Run: python scripts/hardware/wrench_data/record_home.py"
                 )
-            home_q = load_home_joints(home_file)
+            home_q = load_home_joints(home_file, home_record_name)
             print(f"Moving to home joints (rad): {home_q}")
             if not rtde_c.moveJ(home_q.tolist()):
                 raise RuntimeError("moveJ to home failed.")
