@@ -74,17 +74,27 @@ def _snapshot_from_flat(data: dict) -> dict | None:
     }
 
 
+def _empty_home_file() -> dict:
+    return {
+        "robot_ip": DEFAULT_ROBOT_IP,
+        "note": DEFAULT_NOTE,
+        "records": {},
+    }
+
+
 def load_home_file(path: Path = DEFAULT_HOME_FILE) -> dict:
     path = resolve_output_file(path)
     if not path.exists():
-        return {
-            "robot_ip": DEFAULT_ROBOT_IP,
-            "note": DEFAULT_NOTE,
-            "records": {},
-        }
+        return _empty_home_file()
 
-    with path.open(encoding="utf-8") as handle:
-        data = json.load(handle)
+    raw = path.read_text(encoding="utf-8").strip()
+    if not raw:
+        return _empty_home_file()
+
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return _empty_home_file()
 
     if "records" in data:
         data.setdefault("robot_ip", DEFAULT_ROBOT_IP)
