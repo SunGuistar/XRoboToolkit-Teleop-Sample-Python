@@ -14,7 +14,7 @@ from xrobotoolkit_teleop.hardware.soft_constraint import rotation_matrix_to_rotv
 WRENCH_DATA_DIR = Path(__file__).resolve().parent
 DEFAULT_TOOL_TCP_FILE = WRENCH_DATA_DIR / "tool_tcp.json"
 DEFAULT_HOME_FILE = WRENCH_DATA_DIR / "home.json"
-DEFAULT_RECORD_NAME = "RECORD_假定的工具TCP"
+DEFAULT_RECORD_NAME = "tool"
 
 
 class OrientationMode(str, Enum):
