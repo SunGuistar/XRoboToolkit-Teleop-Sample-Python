@@ -11,6 +11,7 @@ Each cycle:
 Usage:
   python scripts/hardware/wrench_data/arc_lift_cycle_hardware.py
   python scripts/hardware/wrench_data/arc_lift_cycle_hardware.py --cycles 10 --angle-deg 65 --lift-m 0.05
+  python scripts/hardware/wrench_data/arc_lift_cycle_hardware.py --reset
   python scripts/hardware/wrench_data/arc_lift_cycle_hardware.py --dry-run
 """
 
@@ -133,12 +134,9 @@ def main(
     velocity: float = 0.03,
     steps: int = 30,
     blend: float = 0.012,
+    reset: bool = False,
     dry_run: bool = False,
 ) -> None:
-    if cycles < 1:
-        raise ValueError(f"cycles must be >= 1, got {cycles}")
-    if lift_m <= 0.0:
-        raise ValueError(f"lift_m must be > 0, got {lift_m}")
     if not home_file.exists():
         raise FileNotFoundError(
             f"Home file not found: {home_file}\n"
@@ -151,6 +149,15 @@ def main(
     try:
         rtde_c, rtde_r = connect_rtde(robot_ip)
         home_q = load_home_joints(home_file, home_record_name)
+
+        if reset:
+            move_to_home(rtde_c, rtde_r, home_q, label="Reset: move to home")
+            return
+
+        if cycles < 1:
+            raise ValueError(f"cycles must be >= 1, got {cycles}")
+        if lift_m <= 0.0:
+            raise ValueError(f"lift_m must be > 0, got {lift_m}")
 
         record_key, record_tcp, x_axis, y_axis = load_axis_xy(tool_tcp_file, record_name)
         print("=== Arc Lift Cycle Plan ===")
