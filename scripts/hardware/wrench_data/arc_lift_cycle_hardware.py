@@ -3,14 +3,14 @@
 
 Each cycle:
   0. moveJ to home
-  1. Rotate +angle_deg around world-Z through tool_tcp record xy
+  1. Rotate -angle_deg around world-Z through tool_tcp record xy
   2. moveL up by lift_m (world Z)
-  3. Rotate -angle_deg
+  3. Rotate +angle_deg
   4. moveL down by lift_m
 
 Usage:
   python scripts/hardware/wrench_data/arc_lift_cycle_hardware.py
-  python scripts/hardware/wrench_data/arc_lift_cycle_hardware.py --cycles 10 --angle-deg 65 --lift-m 0.05
+  python scripts/hardware/wrench_data/arc_lift_cycle_hardware.py --cycles 10 --angle-deg 60 --lift-m 0.05
   python scripts/hardware/wrench_data/arc_lift_cycle_hardware.py --reset
   python scripts/hardware/wrench_data/arc_lift_cycle_hardware.py --dry-run
 """
@@ -126,7 +126,7 @@ def main(
     home_file: Path = DEFAULT_HOME_FILE,
     home_record_name: str | None = None,
     record_name: str = DEFAULT_RECORD_NAME,
-    angle_deg: float = 65.0,
+    angle_deg: float = 60.0,
     lift_m: float = 0.05,
     cycles: int = 10,
     orientation_mode: OrientationMode = OrientationMode.FOLLOW_ARC,
@@ -162,7 +162,7 @@ def main(
         record_key, record_tcp, x_axis, y_axis = load_axis_xy(tool_tcp_file, record_name)
         print("=== Arc Lift Cycle Plan ===")
         print(f"cycles: {cycles}")
-        print(f"angle_deg: +{angle_deg:.1f} / -{angle_deg:.1f}")
+        print(f"angle_deg: -{angle_deg:.1f} / +{angle_deg:.1f}")
         print(f"lift_m: {lift_m:.4f}")
         print(f"home_file: {home_file}")
         print(f"home_record: {home_record_name or '(default)'}")
@@ -185,13 +185,13 @@ def main(
                 y_axis=y_axis,
                 record_key=record_key,
                 record_tcp=record_tcp,
-                angle_deg=angle_deg,
+                angle_deg=-angle_deg,
                 orientation_mode=orientation_mode,
                 velocity=velocity,
                 acceleration=acceleration,
                 steps=steps,
                 blend=blend,
-                label=f"Cycle {cycle}: rotate +{angle_deg:.1f} deg",
+                label=f"Cycle {cycle}: rotate -{angle_deg:.1f} deg",
             )
             execute_z_move(
                 rtde_c,
@@ -208,13 +208,13 @@ def main(
                 y_axis=y_axis,
                 record_key=record_key,
                 record_tcp=record_tcp,
-                angle_deg=-angle_deg,
+                angle_deg=angle_deg,
                 orientation_mode=orientation_mode,
                 velocity=velocity,
                 acceleration=acceleration,
                 steps=steps,
                 blend=blend,
-                label=f"Cycle {cycle}: rotate -{angle_deg:.1f} deg",
+                label=f"Cycle {cycle}: rotate +{angle_deg:.1f} deg",
             )
             execute_z_move(
                 rtde_c,
