@@ -2,11 +2,13 @@
 """Repeat arc rotate -> lift -> reverse arc -> lower on UR5 hardware.
 
 Each cycle:
-  0. moveJ to home
+  0. moveJ to home, then apply cumulative start-Z offset (every N cycles)
   1. Rotate -angle_deg around world-Z through tool_tcp record xy
   2. moveL up by lift_m (world Z)
   3. Rotate +angle_deg
   4. moveL down by lift_m
+
+Start-Z offset: after every 6 cycles the cycle-start height drops by 2 mm (world Z).
 
 Usage:
   python scripts/hardware/wrench_data/arc_lift_cycle_hardware.py
@@ -18,6 +20,7 @@ Usage:
 from __future__ import annotations
 
 import sys
+import time
 from pathlib import Path
 
 import numpy as np
@@ -40,6 +43,14 @@ from arc_motion import (
 )
 from arc_move_hardware import build_movel_path, wait_until_stopped
 from record_home import load_home_joints
+
+
+def cycle_start_z_drop_m(cycle: int, *, every_n_cycles: int, drop_m: float) -> float:
+    if every_n_cycles < 1:
+        raise ValueError(f"every_n_cycles must be >= 1, got {every_n_cycles}")
+    if drop_m < 0.0:
+        raise ValueError(f"drop_m must be >= 0, got {drop_m}")
+    return float((cycle - 1) // every_n_cycles) * drop_m
 
 
 def move_to_home(
@@ -160,6 +171,8 @@ def main(
     home_acceleration: float = 1.5,
     steps: int = 18,
     blend: float = 0.02,
+    start_z_drop_every_n_cycles: int = 6,
+    start_z_drop_m: float = 0.002,
     reset: bool = False,
     verbose: bool = False,
     dry_run: bool = False,
@@ -202,6 +215,10 @@ def main(
         print(f"velocity_m_s: {velocity:.3f}, acceleration_m_s2: {acceleration:.3f}")
         print(f"home_velocity_rad_s: {home_velocity:.3f}, home_acceleration_rad_s2: {home_acceleration:.3f}")
         print(f"steps: {steps}, blend_m: {blend:.4f}, verbose: {verbose}")
+        print(
+            f"start_z_drop: -{start_z_drop_m * 1000.0:.1f} mm every {start_z_drop_every_n_cycles} cycles "
+            f"(max -{cycle_start_z_drop_m(cycles, every_n_cycles=start_z_drop_every_n_cycles, drop_m=start_z_drop_m) * 1000.0:.1f} mm)"
+        )
         print(f"home_file: {home_file}")
         print(f"home_record: {home_record_name or '(default)'}")
         print(f"home joints (rad): {home_q.tolist()}")
@@ -211,9 +228,19 @@ def main(
             return
 
         cycle_start_tcps: list[np.ndarray] = []
+        cycle_durations_s: list[float] = []
+        run_t0 = time.monotonic()
 
         for cycle in range(1, cycles + 1):
+            cycle_t0 = time.monotonic()
+            z_drop_m = cycle_start_z_drop_m(
+                cycle,
+                every_n_cycles=start_z_drop_every_n_cycles,
+                drop_m=start_z_drop_m,
+            )
             print(f"\n######## Cycle {cycle}/{cycles} ########")
+            if z_drop_m > 0.0:
+                print(f"cycle_start_z_drop_m: -{z_drop_m * 1000.0:.1f} mm")
             move_to_home(
                 rtde_c,
                 rtde_r,
@@ -223,6 +250,16 @@ def main(
                 label=f"Cycle {cycle}: move to home",
                 verbose=verbose,
             )
+            if z_drop_m > 0.0:
+                execute_z_move(
+                    rtde_c,
+                    rtde_r,
+                    dz_m=-z_drop_m,
+                    velocity=velocity,
+                    acceleration=acceleration,
+                    label=f"Cycle {cycle}: start Z offset -{z_drop_m * 1000.0:.1f} mm",
+                    verbose=verbose,
+                )
             cycle_start_tcps.append(np.asarray(rtde_r.getActualTCPPose(), dtype=np.float64).reshape(6))
             execute_arc(
                 rtde_c,
@@ -275,8 +312,20 @@ def main(
                 verbose=verbose,
             )
 
+            cycle_elapsed_s = time.monotonic() - cycle_t0
+            cycle_durations_s.append(cycle_elapsed_s)
+            print(f"Cycle {cycle} elapsed: {cycle_elapsed_s:.1f} s")
+
+        total_elapsed_s = time.monotonic() - run_t0
         end_tcp = np.asarray(rtde_r.getActualTCPPose(), dtype=np.float64).reshape(6)
         print("\n=== All Cycles Complete ===")
+        print(f"total_elapsed_s: {total_elapsed_s:.1f}")
+        if cycle_durations_s:
+            print(
+                f"cycle_time_s: min={min(cycle_durations_s):.1f}, "
+                f"max={max(cycle_durations_s):.1f}, "
+                f"avg={sum(cycle_durations_s) / len(cycle_durations_s):.1f}"
+            )
         print(f"last_cycle_end_tcp_pose: {end_tcp.tolist()}")
         if len(cycle_start_tcps) >= 2:
             ref_tcp = cycle_start_tcps[0]
