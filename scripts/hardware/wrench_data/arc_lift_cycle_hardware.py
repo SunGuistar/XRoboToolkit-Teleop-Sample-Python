@@ -29,6 +29,34 @@ import tyro
 from xrobotoolkit_teleop.hardware.interface.universal_robots import connect_rtde, DEFAULT_ROBOT_IP
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+
+def rotation_matrix_to_rotvec(rotation: np.ndarray) -> np.ndarray:
+    """Rotation matrix -> UR axis-angle rotation vector [rx, ry, rz]."""
+    r = np.asarray(rotation, dtype=np.float64).reshape(3, 3)
+    trace = float(np.trace(r))
+    cos_angle = np.clip((trace - 1.0) * 0.5, -1.0, 1.0)
+    angle = float(np.arccos(cos_angle))
+    if angle < 1e-9:
+        return np.zeros(3, dtype=np.float64)
+    axis = np.array(
+        [
+            r[2, 1] - r[1, 2],
+            r[0, 2] - r[2, 0],
+            r[1, 0] - r[0, 1],
+        ],
+        dtype=np.float64,
+    )
+    axis_norm = np.linalg.norm(axis)
+    if axis_norm < 1e-12:
+        return np.zeros(3, dtype=np.float64)
+    return axis * (angle / axis_norm)
+
+
+import arc_motion
+
+arc_motion.matrix_to_rotvec = rotation_matrix_to_rotvec
+
 from arc_motion import (
     DEFAULT_HOME_FILE,
     DEFAULT_RECORD_NAME,
