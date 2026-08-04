@@ -75,3 +75,6 @@ datasets/
 
 third_party/
 dependencies/
+
+# Fairino SDK
+FR3/fairino-python-sdk/
