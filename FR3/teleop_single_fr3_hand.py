@@ -1,22 +1,30 @@
 """
-单 UR5e 灵巧手遥操作 + RealSense 相机 BC 数据采集（无 VR 视频推流）。
+单 FAIRINO FR3（法奥）灵巧手遥操作 + RealSense 相机 BC 数据采集（无 VR 视频推流）。
+
+UR5e 版 scripts/hardware/teleop_single_ur5e_hand.py 的型号迁移：
+控制链路 VR手柄 -> XRoboToolkit -> SingleArmFR3Controller -> placo IK
+         -> FR3 实时关节伺服(SDK ServoMoveStart + ServoJ) -> FR3
+与 UR5e 版结构完全一致，仅底层由 RTDE servoJ 替换为 fairino SDK ServoJ。
 
 与 BC 录制按键共用一条 XRoboToolkit SDK 连接。
 
 常用命令（实验室默认）：
-  python scripts/hardware/teleop_single_ur5e_hand.py
+  python FR3/teleop_single_fr3_hand.py
 
   # 更高分辨率（D435 + D435I 双机时会自动限制 fps）：
-  python scripts/hardware/teleop_single_ur5e_hand.py --quality balanced
+  python FR3/teleop_single_fr3_hand.py --quality balanced
 
   # 仅主相机（录制不含辅相机画面）：
-  python scripts/hardware/teleop_single_ur5e_hand.py --no-pip
+  python FR3/teleop_single_fr3_hand.py --no-pip
 
   # 无相机（仅机械臂遥操作，不 BC 录制）：
-  python scripts/hardware/teleop_single_ur5e_hand.py --no-camera
+  python FR3/teleop_single_fr3_hand.py --no-camera
 
   # 手动指定相机序列号（默认自动检测已连接 RealSense）：
-  python scripts/hardware/teleop_single_ur5e_hand.py --main-serial <SN> --pip-serial <SN>
+  python FR3/teleop_single_fr3_hand.py --main-serial <SN> --pip-serial <SN>
+
+  # 指定控制箱 IP（默认 192.168.58.2）：
+  python FR3/teleop_single_fr3_hand.py --robot-ip 192.168.58.2
 
 相机（默认自动）：
   - 启动时枚举已连接 RealSense，主相机优先 D435I，辅相机优先 D435
@@ -30,20 +38,19 @@
   - Y：丢弃当前录制（并回 Home）
 
 Home 姿态：
-  - 固定保存在 scripts/hardware/teleop_single_ur5e_hand.home.json（非每次连接时重读）
-  - 更新 Home：机械臂摆好后执行  python scripts/hardware/teleop_single_ur5e_hand.py --save-home
+  - 固定保存在 FR3/teleop_single_fr3_hand.home.json（非每次连接时重读）
+  - 更新 Home：机械臂摆好后执行  python FR3/teleop_single_fr3_hand.py --save-home
   - BC 录制结束 / --reset 时回到该 Home
 
 BC 数据采集（V1）：
   - 独立 10Hz 录制线程
   - 训练图像：主相机 + 辅相机（可用 --no-pip / --no-record-save-pip 关闭辅相机）
-  - 原始 episode：logs/ur5e_bc/raw/episode_XXXXX.pkl
+  - 原始 episode：logs/fr3_bc/raw/episode_XXXXX.pkl
 
   observation.state = [qpos(6), gripper_state(1)]   — 0=张开, 1=闭合（扳机代理，无物理夹爪）
   action            = [target_q(6), gripper_cmd(1)] — 0=张开, 1=闭合
 
-  检查 episode：python scripts/check_ur5e_bc_episode.py logs/ur5e_bc/raw/episode_00000.pkl
-  转 LeRobot：  python scripts/convert_ur5e_raw_to_lerobot.py --raw-dir logs/ur5e_bc/raw
+  转 LeRobot 逻辑与 UR5e 一致（scripts/convert_ur5e_raw_to_lerobot.py --raw-dir logs/fr3_bc/raw）。
 
 启动顺序：相机预热与健康检查（可跳过）→ 机械臂线程 → BC 录制器 → 遥操作（Ctrl+C 退出）。
 未检测到 RealSense 时默认继续（仅机械臂）；加 --require-camera 则保持旧行为（无相机即退出）。
@@ -65,26 +72,27 @@ import tyro
 from xrobotoolkit_teleop.bc.config import BCConfig
 from xrobotoolkit_teleop.bc.recorder import BCEpisodeRecorder
 from xrobotoolkit_teleop.common.xr_client import XrClient
-from xrobotoolkit_teleop.hardware.interface.universal_robots import (
+from xrobotoolkit_teleop.hardware.fr3_config import (
     DEFAULT_ROBOT_IP,
-    LEFT_ROBOT_IP,
-    RIGHT_ROBOT_IP,
+    fr3_joint_limits_arrays,
 )
 from xrobotoolkit_teleop.utils.geometry import calibrate_R_headset_world
-from xrobotoolkit_teleop.hardware.single_arm_ur_controller import (
-    FLANGE_CONTROLLER_MANIPULATOR_CONFIG,
-    LEFT_FLANGE_CONTROLLER_MANIPULATOR_CONFIG,
-    SingleArmURController,
+from xrobotoolkit_teleop.hardware.single_arm_fr3_controller import (
+    FR3_LEFT_FLANGE_CONTROLLER_MANIPULATOR_CONFIG,
+    FR3_RIGHT_FLANGE_CONTROLLER_MANIPULATOR_CONFIG,
+    FR3Controller,
+    SingleArmFR3Controller,
 )
 
-_RS_UTILS_PATH = Path(__file__).resolve().parents[1] / "visualization" / "realsense_vr_stream.py"
+# RealSense 工具模块位于 scripts/visualization/（本脚本位于 FR3/，向上一级取项目根）。
+_RS_UTILS_PATH = Path(__file__).resolve().parents[1] / "scripts" / "visualization" / "realsense_vr_stream.py"
 _spec = importlib.util.spec_from_file_location("realsense_vr_stream", _RS_UTILS_PATH)
 if _spec is None or _spec.loader is None:
     raise ImportError(f"无法加载 RealSense 工具模块：{_RS_UTILS_PATH}")
 rs_utils = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(rs_utils)
 
-_HOME_CACHE_PATH = Path(__file__).with_name("teleop_single_ur5e_hand.home.json")
+_HOME_CACHE_PATH = Path(__file__).with_name("teleop_single_fr3_hand.home.json")
 
 
 def _format_joint_deg(q_deg: np.ndarray) -> str:
@@ -120,30 +128,27 @@ def _resolve_home_joint_deg(
     raise RuntimeError(
         f"未找到 Home 文件：{_HOME_CACHE_PATH}\n"
         "请先将机械臂摆到目标 Home 位，再执行：\n"
-        "  python scripts/hardware/teleop_single_ur5e_hand.py --save-home"
+        "  python FR3/teleop_single_fr3_hand.py --save-home"
     )
 
 
 def _save_home_from_robot(robot_ip: str, manipulator_config: dict) -> None:
-    """读取机械臂当前关节角并写入 Home 文件（仅此命令会更改 Home）。"""
-    xr_client = XrClient()
-    arm_controller: SingleArmURController | None = None
+    """读取机械臂当前关节角并写入 Home 文件（仅此命令会更改 Home）。
+
+    仅需读取实机关节角，不涉及 placo IK，故直接使用底层 FR3Controller，
+    无需 FR3 URDF。
+    """
+    controller: FR3Controller | None = None
     try:
-        arm_controller = SingleArmURController(
-            xr_client,
-            manipulator_config=manipulator_config,
-            robot_ip=robot_ip,
-            initial_joint_deg=np.zeros(6, dtype=float),
-        )
-        q_rad = arm_controller.robot_controller.get_current_joint_positions()[:6].copy()
+        controller = FR3Controller(robot_ip=robot_ip)
+        q_rad = controller.get_current_joint_positions()[:6].copy()
         q_deg = np.rad2deg(q_rad)
         _save_home_cache(q_deg)
         print(f"Home 已保存（度）：{_format_joint_deg(q_deg)}")
         print(f"文件：{_HOME_CACHE_PATH}")
     finally:
-        if arm_controller is not None:
-            arm_controller.close()
-        xr_client.close()
+        if controller is not None:
+            controller.close()
 
 
 class _CameraReader:
@@ -337,12 +342,12 @@ def _warmup_camera(serial: str, capture_width: int, capture_height: int, fps: in
 
 
 def _run_reset(robot_ip: str, home_joint_deg: np.ndarray, manipulator_config: dict) -> None:
-    print(f"复位：正在将 UR 移至 Home 位（{robot_ip}）...")
+    print(f"复位：正在将 FR3 移至 Home 位（{robot_ip}）...")
     print(f"  目标关节角（度）：{_format_joint_deg(home_joint_deg)}")
     xr_client = XrClient()
-    arm_controller: SingleArmURController | None = None
+    arm_controller: SingleArmFR3Controller | None = None
     try:
-        arm_controller = SingleArmURController(
+        arm_controller = SingleArmFR3Controller(
             xr_client,
             manipulator_config=manipulator_config,
             robot_ip=robot_ip,
@@ -359,10 +364,10 @@ def _run_reset(robot_ip: str, home_joint_deg: np.ndarray, manipulator_config: di
         xr_client.close()
 
 
-def _start_arm_threads(arm_controller: SingleArmURController, stop_signal: threading.Event) -> list[threading.Thread]:
+def _start_arm_threads(arm_controller: SingleArmFR3Controller, stop_signal: threading.Event) -> list[threading.Thread]:
     threads = [
-        threading.Thread(target=arm_controller.run_robot_thread, args=(stop_signal,), name="ur-servo"),
-        threading.Thread(target=arm_controller.run_ik_thread, args=(stop_signal,), name="ur-ik"),
+        threading.Thread(target=arm_controller.run_robot_thread, args=(stop_signal,), name="fr3-servo"),
+        threading.Thread(target=arm_controller.run_ik_thread, args=(stop_signal,), name="fr3-ik"),
     ]
     for t in threads:
         t.start()
@@ -496,20 +501,19 @@ def main(
     camera_health_interval: float = 10.0,
     enable_recording: bool = True,
     record_fps: float = 10.0,
-    record_save_dir: str = "logs/ur5e_bc/raw",
+    record_save_dir: str = "logs/fr3_bc/raw",
     record_image_format: Literal["jpeg", "raw"] = "jpeg",
     record_save_pip: bool = True,
     record_auto_reset: bool = True,
     policy_mode: bool = False,
     no_camera: bool = False,
     require_camera: bool = False,
+    base_yaw_deg: float = 180.0,
 ) -> None:
     if controller_side == "left":
-        manipulator_config = LEFT_FLANGE_CONTROLLER_MANIPULATOR_CONFIG
-        if robot_ip == DEFAULT_ROBOT_IP:
-            robot_ip = LEFT_ROBOT_IP
+        manipulator_config = FR3_LEFT_FLANGE_CONTROLLER_MANIPULATOR_CONFIG
     else:
-        manipulator_config = FLANGE_CONTROLLER_MANIPULATOR_CONFIG
+        manipulator_config = FR3_RIGHT_FLANGE_CONTROLLER_MANIPULATOR_CONFIG
 
     if save_home:
         _save_home_from_robot(robot_ip, manipulator_config)
@@ -532,19 +536,37 @@ def main(
 
     xr_client = XrClient()
     r_headset_world = calibrate_R_headset_world(xr_client)
-    arm_controller: SingleArmURController | None = None
+    # 基座偏航修正：VR 追踪系→机器人基座系除固定轴重映射外，还差一个绕 z（竖直）
+    # 轴的偏航角，取决于 FR3 相对 VR 房间/操作者的摆放。若摆放与 UR5e 相差 180°，
+    # 现象为前后/左右平移与 rx/ry 腕部俯仰翻转，而上下平移与 rz（手腕左右摆）正常。
+    # 默认 180° 已按本机实际现象标定；若基座转动，用 --base-yaw-deg 重新对齐。
+    yaw = float(np.deg2rad(base_yaw_deg))
+    r_yaw = np.array(
+        [
+            [np.cos(yaw), -np.sin(yaw), 0.0],
+            [np.sin(yaw), np.cos(yaw), 0.0],
+            [0.0, 0.0, 1.0],
+        ]
+    )
+    r_headset_world = r_yaw @ r_headset_world
+    print(f"VR→机器人基座偏航修正：{base_yaw_deg:.1f}°")
+    arm_controller: SingleArmFR3Controller | None = None
     bc_recorder: BCEpisodeRecorder | None = None
     stop_signal = threading.Event()
     arm_threads: list[threading.Thread] = []
     pipelines: list = []
     readers: list[_CameraReader] = []
     cameras_ready = False
+    # FR3 关节限位替换 UR5e 默认值（LeRobot 转换逻辑不变）。
+    fr3_limits_lower, fr3_limits_upper = fr3_joint_limits_arrays()
     bc_config = BCConfig(
         record_fps=record_fps,
         save_dir=Path(record_save_dir),
         image_format=record_image_format,
         save_optional_pip_image=record_save_pip,
         auto_reset_after_episode=record_auto_reset,
+        joint_limits_lower=fr3_limits_lower,
+        joint_limits_upper=fr3_limits_upper,
     )
 
     def cleanup_cameras() -> None:
@@ -557,7 +579,7 @@ def main(
                 pass
 
     try:
-        arm_controller = SingleArmURController(
+        arm_controller = SingleArmFR3Controller(
             xr_client,
             manipulator_config=manipulator_config,
             robot_ip=robot_ip,
