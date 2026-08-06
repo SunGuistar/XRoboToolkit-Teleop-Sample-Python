@@ -731,12 +731,57 @@ def _validate_serial(serial: str, devices: list[tuple[str, str]], label: str) ->
         raise RuntimeError(f"{label} serial {serial} not found.")
 
 
+def resolve_single_color_stream(
+    serial: str,
+    width: int,
+    height: int,
+    fps: int,
+) -> tuple[int, int, int]:
+    """Pick a color stream setting the camera actually supports (e.g. on USB2 links)."""
+    profiles = _color_bgr8_profiles(serial)
+    if not profiles:
+        raise RuntimeError(f"RealSense serial {serial} not found.")
+
+    requested = (width, height, fps)
+    if requested in profiles:
+        return width, height, fps
+
+    # Keep the requested fps, prefer the largest resolution that still fits.
+    # (On USB 2.0 links the same resolution often only offers a few fps,
+    # which is too choppy for teleop; resolution loss hurts less than fps.)
+    at_fps = sorted(
+        (p for p in profiles if p[2] == fps),
+        key=lambda p: p[0] * p[1],
+        reverse=True,
+    )
+    for candidate in at_fps:
+        if candidate[0] * candidate[1] <= width * height:
+            print(
+                f"RealSense {serial}: {width}x{height}@{fps}fps unavailable "
+                f"(likely USB 2.0 link); falling back to "
+                f"{candidate[0]}x{candidate[1]}@{candidate[2]}fps."
+            )
+            return candidate
+
+    # No profile at requested fps: pick the closest by pixel count, then fps.
+    candidates = sorted(
+        profiles,
+        key=lambda p: (abs(p[0] * p[1] - width * height), abs(p[2] - fps)),
+    )
+    fallback = candidates[0]
+    print(
+        f"RealSense {serial}: {width}x{height}@{fps}fps unavailable; "
+        f"falling back to closest {fallback[0]}x{fallback[1]}@{fallback[2]}fps."
+    )
+    return fallback
+
+
 def init_camera_pipeline(
     capture_width: int,
     capture_height: int,
     fps: int,
     serial: str | None,
-) -> tuple[rs.pipeline, str]:
+) -> tuple[rs.pipeline, str, int, int, int]:
     devices = _print_devices()
     if serial:
         _validate_serial(serial, devices, "Camera")
@@ -745,9 +790,12 @@ def init_camera_pipeline(
         use_serial = pick_default_camera_serial(devices)
         print(f"Auto-selected camera: {_device_label(use_serial)}  (serial: {use_serial})")
 
+    capture_width, capture_height, fps = resolve_single_color_stream(
+        use_serial, capture_width, capture_height, fps
+    )
     print("Warming up RealSense (before connecting to headset)...")
     pipeline, _ = warmup_camera(use_serial, capture_width, capture_height, fps)
-    return pipeline, use_serial
+    return pipeline, use_serial, capture_width, capture_height, fps
 
 
 def init_pip_camera_pipelines(
@@ -1085,9 +1133,15 @@ def main() -> int:
                 except Exception as exc:
                     print(f"Warning: controller swap unavailable ({exc})", file=sys.stderr)
         else:
-            main_pipeline, use_serial = init_camera_pipeline(
-                capture_width, capture_height, args.fps, args.serial
-            )
+            (
+                main_pipeline,
+                use_serial,
+                capture_width,
+                capture_height,
+                stream_fps,
+            ) = init_camera_pipeline(capture_width, capture_height, args.fps, args.serial)
+            encode_width = capture_width * 2 if stereo_sbs else capture_width
+            encode_height = capture_height
             pipelines = [main_pipeline]
             get_frame, readers, _ = make_frame_source(main_pipeline)
             get_frame()

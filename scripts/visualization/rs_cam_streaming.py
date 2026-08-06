@@ -2,16 +2,16 @@
 import cv2
 import numpy as np
 
-from xrobotoolkit_teleop.hardware.interface.realsense import (
-    RealSenseCameraInterface,
-    get_supported_resolutions,
-)
+from xrobotoolkit_teleop.hardware.interface.realsense import RealSenseCameraInterface
 
 
 def main():
     try:
-        with RealSenseCameraInterface() as camera_interface:
-            print(get_supported_resolutions("215222077461"))
+        # Both cameras hang off one USB 2.0 hub (480 Mbps). Default 640x480@30
+        # depth+color x2 starves the bus and frames never arrive.
+        # 640x480@15 depth+color x2 is verified stable on this USB 2.0 link.
+        # (480x270 is not usable: the color sensor has no such resolution.)
+        with RealSenseCameraInterface(width=640, height=480, fps=15) as camera_interface:
             while True:
                 camera_interface.update_frames()  # Fetch new frames from cameras
                 frames_dict = camera_interface.get_frames()
