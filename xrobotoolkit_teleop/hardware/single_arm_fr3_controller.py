@@ -6,7 +6,9 @@
 
 与 UR 版的差异仅在底层：
   - RTDE servoJ         -> fairino SDK ServoJ（关节单位 °，cmdType=1 UDP 透传）
-  - rtde_r.getActualQ() -> robot.GetActualJointPosRadian()
+  - rtde_r.getActualQ() -> robot_state_pkg.jt_cur_pos（CNDE 状态流缓存，与 RTDE
+                           同为"推流+本地缓存"结构，纯内存读、无 RPC、无多线程
+                           竞争；CNDE 不可用时回退 RPC GetActualJointPosRadian）
   - rtde_c.moveJ()      -> robot.MoveJ()（仅用于 Home 复位，不用于遥操作实时控制）
 
 底层 SDK 接口已在 FAIRINO 官方 Python SDK (fairino/Robot.py) 中核实存在：
@@ -208,12 +210,62 @@ class FR3Controller:
 
         self._servo_active = False
         self._last_q: np.ndarray | None = None
+        # RPC 串行化锁：xmlrpc.client.ServerProxy 非线程安全，多线程共用同一 HTTP
+        # 连接并发请求会抛 http.client.CannotSendRequest。高频状态读已改走 CNDE
+        # 缓存，此锁仅保护残留的低频 RPC 调用（如回退读、MoveJ）。
+        self._rpc_lock = threading.Lock()
+        self._cnde_verified = False
+        self._cnde_ok = self._wait_cnde_ready(timeout_s=2.0)
+
+    def _wait_cnde_ready(self, timeout_s: float = 2.0) -> bool:
+        """等待 CNDE 状态流开始刷新（frame_cnt 变化），超时则回退 RPC 读。"""
+        pkg = getattr(self.robot, "robot_state_pkg", None)
+        if pkg is None:
+            return False
+        try:
+            first_cnt = int(pkg.frame_cnt)
+        except Exception:
+            return False
+        deadline = time.perf_counter() + timeout_s
+        while time.perf_counter() < deadline:
+            try:
+                if int(pkg.frame_cnt) != first_cnt:
+                    print("CNDE 状态流已就绪，关节角读取使用本地缓存（无 RPC）。")
+                    return True
+            except Exception:
+                break
+            time.sleep(0.01)
+        print(
+            "WARNING: CNDE 状态流未收到数据，关节角读取回退 RPC 轮询"
+            "（慢且存在多线程竞争风险）。"
+        )
+        return False
 
     # ---------------- 状态读取 ----------------
 
     def get_current_joint_positions(self) -> np.ndarray:
-        """当前关节角，numpy (6,)，弧度（与 UR 版 getActualQ 一致）。"""
-        err, q = self.robot.GetActualJointPosRadian(1)
+        """当前关节角，numpy (6,)，弧度（与 UR 版 getActualQ 一致）。
+
+        优先读 CNDE 缓存（robot_state_pkg.jt_cur_pos，控制箱 8ms 推流，SDK 接收
+        线程持续刷新）：纯内存读，等价 UR 版 rtde_r.getActualQ()，任意线程可调。
+        注意 jt_cur_pos 单位为度（RobotStatePkg 结构体注释），需换算为弧度。
+        """
+        if self._cnde_ok:
+            pkg = getattr(self.robot, "robot_state_pkg", None)
+            if pkg is not None:
+                q_rad = np.deg2rad(np.array(pkg.jt_cur_pos, dtype=np.float64))
+                self._verify_cnde_units_once(q_rad)
+                self._last_q = q_rad
+                return q_rad.copy()
+
+        with self._rpc_lock:
+            try:
+                err, q = self.robot.GetActualJointPosRadian(1)
+            except Exception as exc:
+                if self._last_q is not None:
+                    print(f"WARNING: GetActualJointPosRadian 异常（{exc}），使用上次缓存值。")
+                    return self._last_q.copy()
+                raise
         if err != 0 or q is None:
             if self._last_q is not None:
                 print(f"WARNING: GetActualJointPosRadian 失败（错误码 {err}），使用上次缓存值。")
@@ -221,6 +273,28 @@ class FR3Controller:
             raise RuntimeError(f"GetActualJointPosRadian 失败，错误码 {err}，且无缓存可用。")
         self._last_q = np.array(q, dtype=np.float64)
         return self._last_q.copy()
+
+    def _verify_cnde_units_once(self, q_cnde_rad: np.ndarray) -> None:
+        """首次 CNDE 读取时与 RPC 弧度值交叉比对，确认"度"单位假设成立。"""
+        if self._cnde_verified:
+            return
+        self._cnde_verified = True
+        try:
+            with self._rpc_lock:
+                err, q_rpc = self.robot.GetActualJointPosRadian(1)
+            if err == 0 and q_rpc is not None:
+                diff = float(np.max(np.abs(np.asarray(q_rpc, dtype=np.float64) - q_cnde_rad)))
+                if diff < 0.01:
+                    print(f"CNDE 关节角缓存校验通过：与 RPC 一致（最大差 {diff:.6f} rad）。")
+                else:
+                    print(
+                        f"WARNING: CNDE 关节角缓存与 RPC 差异过大（最大 {diff:.3f} rad），"
+                        "请检查 jt_cur_pos 单位换算！"
+                        f"\n  CNDE(deg): {np.rad2deg(q_cnde_rad)}"
+                        f"\n  RPC (deg): {np.rad2deg(np.asarray(q_rpc, dtype=np.float64))}"
+                    )
+        except Exception as exc:
+            print(f"WARNING: CNDE 单位交叉校验失败（{exc}），沿用度单位假设。")
 
     # ---------------- 实时伺服（遥操作用，等价 RTDE servoJ） ----------------
 

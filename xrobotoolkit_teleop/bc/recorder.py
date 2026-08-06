@@ -130,7 +130,11 @@ class BCEpisodeRecorder:
             if self._is_recording:
                 now = time.perf_counter()
                 if now >= next_tick:
-                    self._enqueue_raw_sample()
+                    # 单帧异常不允许杀死采样线程：否则录制会静默中断（按键也失效）。
+                    try:
+                        self._enqueue_raw_sample()
+                    except Exception as exc:
+                        print(f"BC 采样异常（跳过本帧，录制继续）：{exc}", file=sys.stderr)
                     next_tick += interval
                     # 严重落后时重新对齐，避免 CPU 饥饿后连续 burst 两帧。
                     if time.perf_counter() - next_tick > interval:
