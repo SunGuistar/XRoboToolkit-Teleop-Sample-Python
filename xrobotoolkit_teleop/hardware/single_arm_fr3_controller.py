@@ -218,18 +218,23 @@ class FR3Controller:
         self._cnde_ok = self._wait_cnde_ready(timeout_s=2.0)
 
     def _wait_cnde_ready(self, timeout_s: float = 2.0) -> bool:
-        """等待 CNDE 状态流开始刷新（frame_cnt 变化），超时则回退 RPC 读。"""
+        """等待 CNDE 状态流开始刷新，超时则回退 RPC 读。
+
+        探针用默认订阅内的 robot_time.millisecond（每帧随控制器时钟刷新）。
+        不能用 frame_cnt：控制箱固件不支持订阅该状态（NOT_FOUND，会导致
+        整个 CNDE 配置被拒绝，错误码 -18）。
+        """
         pkg = getattr(self.robot, "robot_state_pkg", None)
         if pkg is None:
             return False
         try:
-            first_cnt = int(pkg.frame_cnt)
+            first_ms = int(pkg.millisecond)
         except Exception:
             return False
         deadline = time.perf_counter() + timeout_s
         while time.perf_counter() < deadline:
             try:
-                if int(pkg.frame_cnt) != first_cnt:
+                if int(pkg.millisecond) != first_ms:
                     print("CNDE 状态流已就绪，关节角读取使用本地缓存（无 RPC）。")
                     return True
             except Exception:
@@ -302,7 +307,8 @@ class FR3Controller:
         """进入伺服模式（配合 ServoJ 使用，对应 UR servoJ 的隐式进入）。"""
         if self._servo_active:
             return True
-        err = self.robot.ServoMoveStart(cmdType=self.servo_cmd_type)
+        with self._rpc_lock:
+            err = self.robot.ServoMoveStart(cmdType=self.servo_cmd_type)
         if err != 0:
             print(f"WARNING: ServoMoveStart 失败，错误码 {err}。")
             return False
@@ -314,7 +320,8 @@ class FR3Controller:
         if not self._servo_active:
             return
         try:
-            self.robot.ServoMoveEnd(cmdType=self.servo_cmd_type)
+            with self._rpc_lock:
+                self.robot.ServoMoveEnd(cmdType=self.servo_cmd_type)
         except Exception:
             pass
         self._servo_active = False
@@ -328,17 +335,33 @@ class FR3Controller:
           - cmdType=1(UDP) 若在你的固件上不稳定，改 FR3_SERVO_CMD_TYPE=0。
         """
         q_deg = np.rad2deg(np.asarray(joint_positions_rad, dtype=np.float64)).tolist()
-        err = self.robot.ServoJ(
-            q_deg,
-            FR3_EXAXIS_POS,
-            acc=0.0,
-            vel=0.0,
-            cmdT=self.servo_period,
-            filterT=0.0,
-            gain=0.0,
-            id=0,
-            cmdType=self.servo_cmd_type,
-        )
+        if self.servo_cmd_type == 0:
+            # cmdType=0 走 XML-RPC：必须串行化；100Hz 下与其他 RPC 调用互斥。
+            with self._rpc_lock:
+                err = self.robot.ServoJ(
+                    q_deg,
+                    FR3_EXAXIS_POS,
+                    acc=0.0,
+                    vel=0.0,
+                    cmdT=self.servo_period,
+                    filterT=0.0,
+                    gain=0.0,
+                    id=0,
+                    cmdType=self.servo_cmd_type,
+                )
+        else:
+            # cmdType=1 走 UDP 透传（内部安全检查只读内存），无 RPC，不加锁。
+            err = self.robot.ServoJ(
+                q_deg,
+                FR3_EXAXIS_POS,
+                acc=0.0,
+                vel=0.0,
+                cmdT=self.servo_period,
+                filterT=0.0,
+                gain=0.0,
+                id=0,
+                cmdType=self.servo_cmd_type,
+            )
         return err == 0
 
     def servo_joints(self, joint_positions_rad: np.ndarray) -> bool:
@@ -352,7 +375,8 @@ class FR3Controller:
         if vel_deg is None:
             vel_deg = self.movej_vel_deg
         q_deg = np.rad2deg(np.asarray(joint_positions_rad, dtype=np.float64)).tolist()
-        err = self.robot.MoveJ(q_deg, tool=0, user=0, vel=vel_deg)
+        with self._rpc_lock:
+            err = self.robot.MoveJ(q_deg, tool=0, user=0, vel=vel_deg)
         if err != 0:
             raise RuntimeError(
                 f"FR3 MoveJ 失败，错误码 {err}。\n"
@@ -366,7 +390,9 @@ class FR3Controller:
         t0 = time.time()
         while time.time() - t0 < timeout_s:
             try:
-                err, queue_len = self.robot.GetMotionQueueLength()
+                # 只锁单次 RPC 调用，不锁整个轮询循环，避免长时间阻塞其他 RPC。
+                with self._rpc_lock:
+                    err, queue_len = self.robot.GetMotionQueueLength()
                 if err == 0 and queue_len == 0:
                     return True
             except Exception:
@@ -387,11 +413,13 @@ class FR3Controller:
         except Exception:
             pass
         try:
-            self.robot.StopMotion()
+            with self._rpc_lock:
+                self.robot.StopMotion()
         except Exception:
             pass
         try:
-            self.robot.CloseRPC()
+            with self._rpc_lock:
+                self.robot.CloseRPC()
         except Exception:
             pass
         print("FR3 controller closed.")
