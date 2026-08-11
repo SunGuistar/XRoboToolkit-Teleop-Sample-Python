@@ -829,8 +829,16 @@ class SingleArmFR3Controller:
     def reset(self):
         self.robot_controller.reset()
 
-    def reset_to_home(self, open_gripper: bool = True) -> None:
-        """退出 ServoJ，MoveJ 回 Home，同步遥操作状态。遥操作期间调用安全。"""
+    def reset_to_home(self, open_gripper: bool = True,
+                      two_step: bool = True, z_lift_offset: float = 0.0) -> None:
+        """退出 ServoJ，MoveJ 回 Home，同步遥操作状态。遥操作期间调用安全。
+
+        两步复位（two_step=True，默认）：
+          1. 先沿 Z 轴移动到 Home 高度（保持当前 X/Y/rx/ry/rz）
+          2. 再 MoveJ 到 Home 完整位姿（X/Y/rx/ry/rz 到位）
+        这样可避免复位过程中机械臂水平移动时碰到桌面/物体。
+        z_lift_offset > 0 时，第一步会额外抬高该值 (m)，再落回 Home Z。
+        """
         with self._control_lock:
             self._reset_in_progress = True
 
@@ -840,8 +848,12 @@ class SingleArmFR3Controller:
                 self.robot_controller.servo_stop()
                 self._servo_engaged = False
 
-            self.robot_controller.reset()
             q_home = self.robot_controller.initial_joint_positions.copy()
+
+            if two_step:
+                self._move_to_home_z_first(q_home, z_lift_offset)
+            else:
+                self.robot_controller.reset()
 
             if open_gripper and self.dh_gripper is not None:
                 self.dh_gripper.open_gripper()
@@ -863,6 +875,68 @@ class SingleArmFR3Controller:
         finally:
             with self._control_lock:
                 self._reset_in_progress = False
+
+    def _move_to_home_z_first(self, q_home: np.ndarray, z_lift_offset: float = 0.0) -> None:
+        """两步复位：先调 Z 轴到 Home 高度，再 MoveJ 到 Home。
+
+        Step 1: 读取当前 TCP 位姿，仅替换 Z 为 Home Z + lift_offset，
+                IK 解算中间关节角并 MoveJ 过去。
+        Step 2: MoveJ 到 Home 关节角（X/Y/rx/ry/rz 到位）。
+        """
+        link_name = self.manipulator_config[self.arm_name]["link_name"]
+
+        # --- 当前 TCP 位姿 ---
+        current_q = self.robot_controller.get_current_joint_positions()
+        self.placo_robot.state.q[self.arm_q_slice] = current_q
+        self.placo_robot.update_kinematics()
+        T_current = self.placo_robot.get_T_world_frame(link_name)
+
+        # --- Home TCP 位姿 ---
+        self.placo_robot.state.q[self.arm_q_slice] = q_home
+        self.placo_robot.update_kinematics()
+        T_home = self.placo_robot.get_T_world_frame(link_name)
+
+        z_home = float(T_home[2, 3])
+        z_target = z_home + z_lift_offset
+
+        # --- Step 1: 中间位姿 = 当前 XY/rx/ry/rz + Home Z ---
+        T_mid = T_current.copy()
+        T_mid[2, 3] = z_target
+
+        # IK 解算中间关节角
+        self.placo_robot.state.q[self.arm_q_slice] = current_q
+        self.placo_robot.update_kinematics()
+        self.effector_task[self.arm_name].T_world_frame = T_mid
+        try:
+            self.solver.solve(True)
+            q_mid = self.placo_robot.state.q[self.arm_q_slice].copy()
+        except RuntimeError as e:
+            print(f"[reset] IK 解算中间位姿失败（{e}），回退为直接 MoveJ。")
+            self.robot_controller.reset()
+            return
+
+        print(f"[reset] Step 1/2: Z 轴移动到 {z_target:.4f}m"
+              f"{' (+lift ' + f'{z_lift_offset:.3f}m)' if z_lift_offset != 0 else ''}")
+        self.robot_controller.move_j(q_mid)
+
+        if z_lift_offset != 0:
+            # 额外抬高后需落回 Home Z
+            T_mid2 = T_mid.copy()
+            T_mid2[2, 3] = z_home
+            self.placo_robot.state.q[self.arm_q_slice] = q_mid
+            self.placo_robot.update_kinematics()
+            self.effector_task[self.arm_name].T_world_frame = T_mid2
+            try:
+                self.solver.solve(True)
+                q_mid2 = self.placo_robot.state.q[self.arm_q_slice].copy()
+            except RuntimeError as e:
+                print(f"[reset] IK 解算落回高度失败（{e}），跳过此步。")
+                q_mid2 = q_mid
+            print(f"[reset] Step 1b: 落回 Home Z {z_home:.4f}m")
+            self.robot_controller.move_j(q_mid2)
+
+        print("[reset] Step 2/2: MoveJ 到 Home 完整位姿")
+        self.robot_controller.move_j(q_home)
 
     def close(self):
         if self.dh_gripper is not None:
