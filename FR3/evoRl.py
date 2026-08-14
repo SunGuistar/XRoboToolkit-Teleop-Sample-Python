@@ -12,7 +12,8 @@ FR3 EvoRL 推理控制脚本
 
 服务端协议（ZMQ REQ/REP, JSON）：
   发送: {"image_main": <base64 JPEG>, "image_pip": <base64 JPEG>,
-         "state": [q1..q6, gripper], "task": "task description"}
+         "state": [q1..q6, gripper], "task": "task description",
+         "reset": true/false}
   接收: {"action": [q1..q6] 或 [q1..q6, gripper], "status": "ok"/"error",
          "done": true/false}
 
@@ -33,15 +34,18 @@ FR3 EvoRL 推理控制脚本
 
 import argparse
 import base64
-import io
 import math
 import os
+import pickle
 import sys
 import time
+from pathlib import Path
 
 import cv2
 import numpy as np
 import zmq
+
+from xrobotoolkit_teleop.utils.image_utils import compress_image_to_jpg
 
 # 图像保存目录
 SAVE_IMG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "imges")
@@ -60,6 +64,8 @@ SERVER_PORT = 5555
 MOVEJ_VEL_DEG = 15.0
 ZMQ_TIMEOUT_MS = 10000    # ZMQ 等待推理结果超时 (ms)
 JPEG_QUALITY = 70         # JPEG 压缩质量（0-100）
+DEFAULT_RECORD_DIR = "logs/fr3_bc/raw_RL"
+RECORD_FPS = 10.0
 
 # FR3 关节软限位（度）
 JOINT_LIMITS_DEG = [
@@ -259,8 +265,11 @@ class InferenceClient:
         print(f"[✓] ZMQ 客户端已连接: {self._endpoint}")
 
     def request_action(self, image_main_b64: str, image_pip_b64: str,
-                       state: list, task: str) -> dict:
+                       state: list, task: str, reset: bool = False) -> dict:
         """发送观测，接收推理结果。
+
+        Args:
+            reset: 是否为首次请求，用于通知服务端重置内部状态
 
         Returns:
             {"action": [...], "status": "ok"} 或 {"action": [], "status": "error", ...}
@@ -271,6 +280,7 @@ class InferenceClient:
             "image_pip": image_pip_b64,
             "state": state,
             "task": task,
+            "reset": bool(reset),
         }
         try:
             self.socket.send_json(msg)
@@ -309,6 +319,136 @@ class InferenceClient:
             pass
 
 
+# ── Episode 录制器（参考 teleop BCEpisodeRecorder 格式） ───────────────
+
+class EpisodeRecorder:
+    """为 evoRl.py 定制的 episode 录制器。
+
+    数据格式与 teleop_single_fr3_hand.py / BCEpisodeRecorder 保持一致：
+      - 保存目录: logs/fr3_bc/raw_RL
+      - 文件名: episode_{index:05d}.pkl
+      - 每帧字段: timestamp, frame_index, episode_index, image_main, image_pip,
+                 qpos, target_q, gripper_state, gripper_cmd, control_active
+      - metadata: episode_index, success, task, fps, num_frames, start_time,
+                  end_time, duration, image_format, schema_version,
+                  observation_state_layout, action_layout
+    """
+
+    def __init__(self, save_dir: str, task: str, fps: float = RECORD_FPS,
+                 image_format: str = "jpeg", jpeg_quality: int = 85):
+        self.save_dir = Path(save_dir).resolve()
+        self.save_dir.mkdir(parents=True, exist_ok=True)
+        self.task = task
+        self.fps = fps
+        self.image_format = image_format
+        self.jpeg_quality = jpeg_quality
+        self.schema_version = 1
+
+        self.episode_index = self._next_episode_index()
+        self.frames: list[dict] = []
+        self.frame_index = 0
+        self.start_time: float | None = None
+        self.session_start_time = time.time()
+        self.is_recording = False
+
+    def _next_episode_index(self) -> int:
+        existing = sorted(self.save_dir.glob("episode_*.pkl"))
+        if not existing:
+            return 0
+        last = existing[-1].stem
+        try:
+            return int(last.split("_")[1]) + 1
+        except (IndexError, ValueError):
+            return len(existing)
+
+    def start_episode(self):
+        """开始新 episode（evoRl 一个运行周期只录一个 episode）。"""
+        self.frames = []
+        self.frame_index = 0
+        self.start_time = time.time()
+        self.is_recording = True
+        print(f"--- 开始录制 episode_{self.episode_index:05d}.pkl ---")
+        print(f"    保存目录: {self.save_dir}")
+
+    def add_frame(self, image_main_bgr: np.ndarray | None, image_pip_bgr: np.ndarray | None,
+                  qpos: np.ndarray, target_q: np.ndarray,
+                  gripper_state: float, gripper_cmd: float):
+        """添加一帧。图像应为 BGR numpy 数组；内部编码为 JPEG bytes。"""
+        if not self.is_recording:
+            return
+
+        if self.image_format == "jpeg":
+            image_main = compress_image_to_jpg(image_main_bgr, quality=self.jpeg_quality)
+            image_pip = compress_image_to_jpg(image_pip_bgr, quality=self.jpeg_quality)
+        else:
+            image_main = image_main_bgr.copy() if image_main_bgr is not None else None
+            image_pip = image_pip_bgr.copy() if image_pip_bgr is not None else None
+
+        frame = {
+            "timestamp": time.time() - self.session_start_time,
+            "frame_index": self.frame_index,
+            "episode_index": self.episode_index,
+            "image_main": image_main,
+            "qpos": np.asarray(qpos, dtype=np.float64).copy(),
+            "target_q": np.asarray(target_q, dtype=np.float64).copy(),
+            "gripper_state": float(gripper_state),
+            "gripper_cmd": float(gripper_cmd),
+            "control_active": True,
+        }
+        if image_pip is not None:
+            frame["image_pip"] = image_pip
+
+        self.frames.append(frame)
+        self.frame_index += 1
+
+    def finalize(self, success: bool = True) -> Path | None:
+        """结束录制并保存 pickle。"""
+        if not self.is_recording:
+            return None
+        self.is_recording = False
+
+        if not self.frames:
+            print("[*] 本局无数据，未保存。")
+            return None
+
+        end_time = time.time()
+        metadata = {
+            "episode_index": self.episode_index,
+            "success": success,
+            "task": self.task,
+            "fps": self.fps,
+            "num_frames": len(self.frames),
+            "start_time": self.start_time,
+            "end_time": end_time,
+            "duration": (end_time - self.start_time) if self.start_time else 0.0,
+            "image_format": self.image_format,
+            "schema_version": self.schema_version,
+            "observation_state_layout": "qpos(6) + gripper_state(1), 0=open 1=close",
+            "action_layout": "target_q(6) + gripper_cmd(1), 0=open 1=close",
+        }
+        payload = {"metadata": metadata, "frames": self.frames}
+
+        filename = f"episode_{self.episode_index:05d}.pkl"
+        final_path = self.save_dir / filename
+        tmp_path = final_path.with_suffix(".pkl.tmp")
+
+        try:
+            with open(tmp_path, "wb") as f:
+                pickle.dump(payload, f, protocol=pickle.HIGHEST_PROTOCOL)
+            tmp_path.replace(final_path)
+            size_mb = final_path.stat().st_size / (1024 * 1024)
+            print(f"[✓] 已保存 {filename}（{len(self.frames)} 帧，{size_mb:.1f} MB）")
+            print(f"    → {final_path}")
+            return final_path
+        except OSError as exc:
+            print(f"[!] 保存失败: {exc}")
+            if tmp_path.exists():
+                tmp_path.unlink(missing_ok=True)
+            return None
+        finally:
+            self.episode_index += 1
+
+
 # ── MoveJ 运动 ───────────────────────────────────────────────────
 
 def move_joints(robot, q_rad: np.ndarray, vel_deg: float = MOVEJ_VEL_DEG) -> bool:
@@ -340,7 +480,8 @@ def move_joints(robot, q_rad: np.ndarray, vel_deg: float = MOVEJ_VEL_DEG) -> boo
 
 def run_inference_loop(robot, zmq_client: InferenceClient,
                        camera: CameraManager,
-                       task: str, max_steps: int = 0):
+                       task: str, max_steps: int = 0,
+                       recorder: EpisodeRecorder | None = None) -> bool:
     """同步主循环：采集 → 请求推理 → MoveJ 移动机械臂 → 读新状态 → 循环。
 
     每一步严格串行：发数据给服务端 → 收 action → MoveJ 到位 → 下一步。
@@ -348,6 +489,10 @@ def run_inference_loop(robot, zmq_client: InferenceClient,
     Args:
         robot: FR3 机器人实例，None 表示不连接机械臂（仅测试通信）
         max_steps: 最大步数，0 表示无限循环
+        recorder: 若提供，每帧数据会追加到 episode 录制
+
+    Returns:
+        是否因服务端返回 done=true 而结束
     """
     no_robot = robot is None
     # 占位图像（无相机模式）
@@ -371,6 +516,7 @@ def run_inference_loop(robot, zmq_client: InferenceClient,
     t_start = time.perf_counter()
     success_count = 0
     error_count = 0
+    is_first_request = True  # 第一次请求时 reset=true
 
     motion_label = "MoveJ" if robot is not None else "不下发运动"
     print(f"\n[*] 开始同步推理循环（{motion_label}）")
@@ -406,7 +552,9 @@ def run_inference_loop(robot, zmq_client: InferenceClient,
             state = list(current_q) + [gripper_cmd]
 
             # ── 2. 请求推理 ──
-            reply = zmq_client.request_action(img_main_b64, img_pip_b64, state, task)
+            reply = zmq_client.request_action(img_main_b64, img_pip_b64, state, task,
+                                               reset=is_first_request)
+            is_first_request = False  # 后续请求 reset=false
             status = reply.get("status", "unknown")
 
             target_q = current_q.copy()  # 默认保持当前位置
@@ -439,7 +587,19 @@ def run_inference_loop(robot, zmq_client: InferenceClient,
                 print(f"    MoveJ 目标(deg): {[round(v, 1) for v in target_deg[:3]]}")
                 move_joints(robot, target_q)
 
-            # ── 4. 读新状态（下一步发给服务端） ──
+            # ── 4. 录制帧（与发给服务端的数据一致） ──
+            if recorder is not None:
+                # 注意：用发送前的原始图像（frame_main/pip）和回复后的 target_q
+                recorder.add_frame(
+                    image_main_bgr=frame_main,
+                    image_pip_bgr=frame_pip if frame_pip is not None else frame_main,
+                    qpos=current_q,
+                    target_q=target_q,
+                    gripper_state=state[6],
+                    gripper_cmd=gripper_cmd,
+                )
+
+            # ── 5. 读新状态（下一步发给服务端） ──
             if not no_robot:
                 try:
                     current_q = get_current_joints_rad(robot)
@@ -471,9 +631,21 @@ def run_inference_loop(robot, zmq_client: InferenceClient,
         dt = time.perf_counter() - t_start
         print(f"\n[✓] 控制循环结束：{step} 步, {dt:.1f}s, "
               f"成功 {success_count}, 失败 {error_count}")
+    return done
 
 
 # ── 入口 ──────────────────────────────────────────────────────────
+
+def ask_episode_success() -> bool:
+    """因 done=true 结束时，询问用户本次 episode 是否成功。"""
+    while True:
+        ans = input("\n服务端已返回 done=true，本次 episode 是否成功？T/F: ").strip().upper()
+        if ans == "T":
+            return True
+        if ans == "F":
+            return False
+        print("请输入 T 或 F")
+
 
 def confirm_motion(yes=False):
     if yes:
@@ -508,6 +680,15 @@ def main():
                         help="无相机模式（用零图像占位，测试通信+控制链路）")
     parser.add_argument("--no-robot", action="store_true",
                         help="不连接机械臂（仅测试 ZMQ 推理通信）")
+    # 录制
+    parser.add_argument("--record", action="store_true",
+                        help="录制 episode 到 --record-dir（格式与 teleop 一致）")
+    parser.add_argument("--record-dir", default=DEFAULT_RECORD_DIR,
+                        help=f"录制保存目录（默认 {DEFAULT_RECORD_DIR}）")
+    parser.add_argument("--record-format", choices=["jpeg", "raw"], default="jpeg",
+                        help="图像保存格式：jpeg 或 raw（默认 jpeg）")
+    parser.add_argument("--record-quality", type=int, default=85,
+                        help="JPEG 质量 1-100（默认 85）")
     # 其他
     parser.add_argument("--zmq-timeout", type=int, default=ZMQ_TIMEOUT_MS,
                         help=f"ZMQ 接收超时 ms（默认 {ZMQ_TIMEOUT_MS}）")
@@ -539,18 +720,38 @@ def main():
     zmq_client = InferenceClient(args.server_ip, args.server_port,
                                   timeout_ms=args.zmq_timeout)
 
-    # ── 4. 主循环 ──
+    # ── 4. 初始化录制器（--record 时） ──
+    recorder = None
+    if args.record:
+        recorder = EpisodeRecorder(
+            save_dir=args.record_dir,
+            task=args.task,
+            fps=RECORD_FPS,
+            image_format=args.record_format,
+            jpeg_quality=args.record_quality,
+        )
+        recorder.start_episode()
+
+    # ── 5. 主循环 ──
     try:
-        run_inference_loop(robot, zmq_client, camera,
-                           task=args.task, max_steps=args.max_steps)
+        ended_by_done = run_inference_loop(robot, zmq_client, camera,
+                                           task=args.task, max_steps=args.max_steps,
+                                           recorder=recorder)
     except KeyboardInterrupt:
         print("\n[!] 用户中断，停止运动")
+        ended_by_done = False
         if robot is not None:
             try:
                 robot.StopMotion()
             except Exception:
                 pass
     finally:
+        if recorder is not None:
+            # 只有因 done=true 结束时才询问 success；否则默认 True
+            success = True
+            if ended_by_done:
+                success = ask_episode_success()
+            recorder.finalize(success=success)
         zmq_client.close()
         camera.stop()
         if robot is not None:
