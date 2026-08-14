@@ -13,7 +13,8 @@ FR3 EvoRL 推理控制脚本
 服务端协议（ZMQ REQ/REP, JSON）：
   发送: {"image_main": <base64 JPEG>, "image_pip": <base64 JPEG>,
          "state": [q1..q6, gripper], "task": "task description"}
-  接收: {"action": [q1..q6] 或 [q1..q6, gripper], "status": "ok"/"error"}
+  接收: {"action": [q1..q6] 或 [q1..q6, gripper], "status": "ok"/"error",
+         "done": true/false}
 
 使用方式：
   # 启动（需 RealSense 相机已连接）
@@ -409,6 +410,7 @@ def run_inference_loop(robot, zmq_client: InferenceClient,
             status = reply.get("status", "unknown")
 
             target_q = current_q.copy()  # 默认保持当前位置
+            done = bool(reply.get("done", False))  # 无论 status 如何都读取 done
             if status == "ok":
                 action = reply.get("action", [])
                 raw_action = list(action)  # 保存服务端原始返回值
@@ -427,9 +429,12 @@ def run_inference_loop(robot, zmq_client: InferenceClient,
                 msg = reply.get("message", "unknown")
                 print(f"[!] 推理错误（step {step}）: {msg}")
                 error_count += 1
+                # 即使报错，如果服务端明确返回 done=true，也停止
+                if done:
+                    print("[*] 服务端返回 done=true，忽略错误并停止")
 
-            # ── 3. MoveJ 到目标关节角（无机械臂时跳过） ──
-            if robot is not None:
+            # ── 3. MoveJ 到目标关节角（无机械臂时跳过；done-only 包无 action 时保持当前位置） ──
+            if robot is not None and status == "ok":
                 target_deg = np.rad2deg(target_q)
                 print(f"    MoveJ 目标(deg): {[round(v, 1) for v in target_deg[:3]]}")
                 move_joints(robot, target_q)
@@ -449,10 +454,16 @@ def run_inference_loop(robot, zmq_client: InferenceClient,
             raw_str = ", ".join(f"{v:.4f}" for v in raw_action)
             q_deg = np.rad2deg(current_q)
             q_str = ", ".join(f"{v:.1f}" for v in q_deg[:3])
+            done_str = " [DONE]" if done else ""
             print(f"  [{step} 步] {fps:.1f} step/s | "
                   f"成功 {success_count} / 失败 {error_count} | "
                   f"服务端 action = [{raw_str}] | "
-                  f"当前 q_deg[:3] = [{q_str}°]")
+                  f"当前 q_deg[:3] = [{q_str}°]{done_str}")
+
+            # 服务端返回 done=true 时优雅结束
+            if done:
+                print("\n[*] 服务端返回 done=true，任务完成，停止循环")
+                break
 
     except KeyboardInterrupt:
         print(f"\n[!] 用户中断（已执行 {step} 步）")
