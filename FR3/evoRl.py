@@ -324,35 +324,32 @@ class InferenceClient:
 class EpisodeRecorder:
     """为 evoRl.py 定制的 episode 录制器。
 
-    数据格式与 teleop_single_fr3_hand.py / BCEpisodeRecorder 保持一致：
-      - 保存目录: logs/fr3_bc/raw_RL
-      - 文件名: episode_{index:05d}.pkl
-      - 每帧字段: timestamp, frame_index, episode_index, image_main, image_pip,
-                 qpos, target_q, gripper_state, gripper_cmd, control_active
-      - metadata: episode_index, success, task, fps, num_frames, start_time,
-                  end_time, duration, image_format, schema_version,
-                  observation_state_layout, action_layout
+    数据格式与 teleop_single_fr3_hand.py / BCEpisodeRecorder 保持一致。
+    根据最终 success 值分别保存到 save_dir/success/ 或 save_dir/fail/，
+    两个子目录各自独立编号。
     """
 
     def __init__(self, save_dir: str, task: str, fps: float = RECORD_FPS,
                  image_format: str = "jpeg", jpeg_quality: int = 85):
-        self.save_dir = Path(save_dir).resolve()
-        self.save_dir.mkdir(parents=True, exist_ok=True)
+        self.base_save_dir = Path(save_dir).resolve()
+        self.base_save_dir.mkdir(parents=True, exist_ok=True)
         self.task = task
         self.fps = fps
         self.image_format = image_format
         self.jpeg_quality = jpeg_quality
         self.schema_version = 1
 
-        self.episode_index = self._next_episode_index()
+        # 首次 episode_index 在 start_episode 时根据最终 success 目录决定
+        self.episode_index = 0
         self.frames: list[dict] = []
         self.frame_index = 0
         self.start_time: float | None = None
         self.session_start_time = time.time()
         self.is_recording = False
 
-    def _next_episode_index(self) -> int:
-        existing = sorted(self.save_dir.glob("episode_*.pkl"))
+    def _next_episode_index(self, subdir: Path) -> int:
+        subdir.mkdir(parents=True, exist_ok=True)
+        existing = sorted(subdir.glob("episode_*.pkl"))
         if not existing:
             return 0
         last = existing[-1].stem
@@ -362,13 +359,13 @@ class EpisodeRecorder:
             return len(existing)
 
     def start_episode(self):
-        """开始新 episode（evoRl 一个运行周期只录一个 episode）。"""
+        """开始新 episode。实际保存目录在 finalize 时根据 success 决定。"""
         self.frames = []
         self.frame_index = 0
         self.start_time = time.time()
         self.is_recording = True
-        print(f"--- 开始录制 episode_{self.episode_index:05d}.pkl ---")
-        print(f"    保存目录: {self.save_dir}")
+        print(f"--- 开始录制 ---")
+        print(f"    基础保存目录: {self.base_save_dir}")
 
     def add_frame(self, image_main_bgr: np.ndarray | None, image_pip_bgr: np.ndarray | None,
                   qpos: np.ndarray, target_q: np.ndarray,
@@ -402,7 +399,7 @@ class EpisodeRecorder:
         self.frame_index += 1
 
     def finalize(self, success: bool = True) -> Path | None:
-        """结束录制并保存 pickle。"""
+        """结束录制并保存 pickle。根据 success 选择 success/ 或 fail/ 子目录。"""
         if not self.is_recording:
             return None
         self.is_recording = False
@@ -410,6 +407,10 @@ class EpisodeRecorder:
         if not self.frames:
             print("[*] 本局无数据，未保存。")
             return None
+
+        subname = "success" if success else "fail"
+        subdir = self.base_save_dir / subname
+        self.episode_index = self._next_episode_index(subdir)
 
         end_time = time.time()
         metadata = {
@@ -429,7 +430,7 @@ class EpisodeRecorder:
         payload = {"metadata": metadata, "frames": self.frames}
 
         filename = f"episode_{self.episode_index:05d}.pkl"
-        final_path = self.save_dir / filename
+        final_path = subdir / filename
         tmp_path = final_path.with_suffix(".pkl.tmp")
 
         try:
@@ -437,7 +438,7 @@ class EpisodeRecorder:
                 pickle.dump(payload, f, protocol=pickle.HIGHEST_PROTOCOL)
             tmp_path.replace(final_path)
             size_mb = final_path.stat().st_size / (1024 * 1024)
-            print(f"[✓] 已保存 {filename}（{len(self.frames)} 帧，{size_mb:.1f} MB）")
+            print(f"[✓] 已保存 {filename}（{len(self.frames)} 帧，{subname}，{size_mb:.1f} MB）")
             print(f"    → {final_path}")
             return final_path
         except OSError as exc:
@@ -445,8 +446,6 @@ class EpisodeRecorder:
             if tmp_path.exists():
                 tmp_path.unlink(missing_ok=True)
             return None
-        finally:
-            self.episode_index += 1
 
 
 # ── MoveJ 运动 ───────────────────────────────────────────────────
