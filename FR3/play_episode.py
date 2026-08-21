@@ -62,11 +62,11 @@ from fairino import Robot  # noqa: E402
 ROBOT_IP = "192.168.58.2"
 DEFAULT_EPISODE = os.path.normpath(
     os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                 "..", "logs", "fr3_bc", "第三版", "correct", "episode_00001.pkl")
+                 "..", "logs", "fr3_bc", "第三版修正", "raw", "episode_00001.pkl")
 )
 EXAXIS_POS = [0.0, 0.0, 0.0, 0.0]
 SERVO_CMD_TYPE = 1
-MOVEJ_VEL_DEG = 30.0
+MOVEJ_VEL_DEG = 15.0
 
 # FR3 关节软限位（度）
 JOINT_LIMITS_DEG = [
@@ -272,8 +272,8 @@ def main():
                         help=f"episode pickle 路径（默认 {DEFAULT_EPISODE}）")
     parser.add_argument("--robot-ip", default=ROBOT_IP,
                         help=f"FR3 控制箱 IP（默认 {ROBOT_IP}）")
-    parser.add_argument("--mode", choices=["servo", "movej"], default="servo",
-                        help="回放方式：servo=按原 FPS 连续 ServoJ（默认），movej=每帧等完成")
+    parser.add_argument("--mode", choices=["servo", "movej"], default="movej",
+                        help="回放方式：movej=每帧等完成（默认），servo=按原 FPS 连续 ServoJ")
     parser.add_argument("--movej-vel", type=float, default=MOVEJ_VEL_DEG,
                         help=f"MoveJ 速度 °/s（默认 {MOVEJ_VEL_DEG}）")
     parser.add_argument("--cmd-type", type=int, default=SERVO_CMD_TYPE, choices=[0, 1],
@@ -303,11 +303,6 @@ def main():
     # Dry run
     if args.dry_run:
         dry_run(trajectory, period)
-        sys.exit(0)
-
-    # 安全确认
-    if not confirm_motion(args.mode, args.yes):
-        print("已取消。")
         sys.exit(0)
 
     # 连接机器人
