@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
 拼接 fail + raw episode，末尾追加 10 帧静止帧，保存到 Rl_correction。
+然后将 raw_RL（fail/only_fail/success）与 Rl_correction 合并到 RL 目录。
 
 用法：
   python FR3/merge_rl_correction.py
@@ -12,6 +13,8 @@
   4. 重排 frame_index，重算 timestamp
   5. 末尾追加 10 帧静止帧（复制最后一帧）
   6. 保存到 logs/fr3_bc/Rl_correction/
+  7. 将 raw_RL/fail, raw_RL/only_fail, raw_RL/success, Rl_correction
+     中的所有 episode 合并到 logs/fr3_bc/RL/，重新连续编号
 
 缺失配对的 episode 会报错并跳过。
 """
@@ -27,6 +30,7 @@ from pathlib import Path
 DEFAULT_FAIL_DIR = "logs/fr3_bc/raw_RL/fail"
 DEFAULT_RAW_DIR = "logs/fr3_bc/raw"
 DEFAULT_DST_DIR = "logs/fr3_bc/Rl_correction"
+DEFAULT_MERGE_DST_DIR = "logs/fr3_bc/RL"
 PAD_FRAMES = 10
 
 
@@ -119,6 +123,58 @@ def update_metadata(data: dict) -> dict:
     return data
 
 
+def merge_all_episodes(source_dirs: list[Path], dst_dir: Path) -> int:
+    """将多个源目录中的所有 episode 合并到 dst_dir，重新连续编号。
+
+    源目录中可能存在同序号文件，合并后统一重新编号 episode_index
+    （metadata 和每帧的 episode_index 均同步更新）。
+
+    Returns:
+        合并的 episode 总数
+    """
+    dst_dir.mkdir(parents=True, exist_ok=True)
+
+    # 清空目标目录中的旧 episode 文件
+    for f in dst_dir.glob("episode_*.pkl"):
+        f.unlink()
+        print(f"    [清除] {f.name}")
+
+    new_index = 0
+    total_copied = 0
+
+    for src_dir in source_dirs:
+        if not src_dir.is_dir():
+            print(f"  [跳过] 目录不存在: {src_dir}")
+            continue
+
+        pkl_files = sorted(
+            src_dir.glob("episode_*.pkl"),
+            key=lambda p: extract_index(p.name) or 0,
+        )
+        print(f"  {src_dir}: {len(pkl_files)} 个 episode")
+
+        for src_path in pkl_files:
+            try:
+                data = load_episode(str(src_path))
+                # 更新 episode_index 为新编号
+                data["metadata"]["episode_index"] = new_index
+                for frame in data.get("frames", []):
+                    frame["episode_index"] = new_index
+
+                dst_path = dst_dir / f"episode_{new_index:05d}.pkl"
+                tmp_path = dst_path.with_suffix(".pkl.tmp")
+                with open(tmp_path, "wb") as f:
+                    pickle.dump(data, f, protocol=pickle.HIGHEST_PROTOCOL)
+                os.replace(str(tmp_path), str(dst_path))
+
+                new_index += 1
+                total_copied += 1
+            except Exception as exc:
+                print(f"    [!] 合并 {src_path.name} 失败: {exc}")
+
+    return total_copied
+
+
 def process_pair(fail_path: str, raw_path: str, dst_path: str, pad_n: int = PAD_FRAMES):
     """处理一对 episode：加载、拼接、padding、保存。"""
     fail_data = load_episode(fail_path)
@@ -149,6 +205,8 @@ def main():
                         help=f"输出目录（默认 {DEFAULT_DST_DIR}）")
     parser.add_argument("--pad-frames", type=int, default=PAD_FRAMES,
                         help=f"末尾追加静止帧数（默认 {PAD_FRAMES}）")
+    parser.add_argument("--merge-dst-dir", default=DEFAULT_MERGE_DST_DIR,
+                        help=f"合并输出目录（默认 {DEFAULT_MERGE_DST_DIR}）")
     args = parser.parse_args()
 
     fail_dir = Path(args.fail_dir)
@@ -207,7 +265,21 @@ def main():
         except Exception as exc:
             print(f"[!] 处理 {fname} 失败: {exc}")
 
-    print(f"\n[✓] 完成，共处理 {len(common_indices)} 个 episode")
+    print(f"\n[✓] Rl_correction 完成，共处理 {len(common_indices)} 个 episode")
+
+    # ── 合并所有 episode 到 RL 目录 ──
+    merge_dst = Path(args.merge_dst_dir)
+    only_fail_dir = fail_dir.parent / "only_fail"
+    success_dir = fail_dir.parent / "success"
+    source_dirs = [fail_dir, only_fail_dir, success_dir, dst_dir]
+
+    print(f"\n[*] 开始合并所有 episode 到 {merge_dst}")
+    print(f"    源目录：")
+    for d in source_dirs:
+        print(f"      {d}")
+
+    total_merged = merge_all_episodes(source_dirs, merge_dst)
+    print(f"\n[✓] 合并完成，共 {total_merged} 个 episode → {merge_dst}")
 
 
 if __name__ == "__main__":

@@ -37,8 +37,12 @@ import base64
 import math
 import os
 import pickle
+import select
 import sys
+import termios
+import threading
 import time
+import tty
 from pathlib import Path
 
 import cv2
@@ -475,12 +479,79 @@ def move_joints(robot, q_rad: np.ndarray, vel_deg: float = MOVEJ_VEL_DEG) -> boo
     return False
 
 
+# ── 键盘监听（录制时 T/F 快速标记） ──────────────────────────────────
+
+class KeyListener:
+    """后台监听单字符按键（T/F），用于录制时快速标记 success 并结束 episode。
+
+    使用 cbreak 模式读取单字符（无需回车）：
+      T → success=True  ，F → success=False。
+    检测到按键后自动结束循环；未按键时 loop 结束后由 ask_episode_success 兜底。
+    """
+
+    def __init__(self):
+        self._thread: threading.Thread | None = None
+        self._stop_event = threading.Event()
+        self.requested_success: bool | None = None
+        self.key_pressed = False
+        self._old_settings = None
+        self._started = False
+
+    def start(self):
+        if self._started:
+            return
+        if not sys.stdin.isatty():
+            print("[*] stdin 非终端，键盘监听不可用（结束后手动输入 T/F）")
+            return
+        self._started = True
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+        print("[*] 键盘监听已启动：录制中按 T=成功 / F=失败 结束并保存")
+
+    def _run(self):
+        try:
+            self._old_settings = termios.tcgetattr(sys.stdin)
+            tty.setcbreak(sys.stdin.fileno())
+            while not self._stop_event.is_set():
+                rlist, _, _ = select.select([sys.stdin], [], [], 0.1)
+                if rlist:
+                    ch = sys.stdin.read(1)
+                    ch_upper = ch.upper()
+                    if ch_upper == 'T':
+                        self.requested_success = True
+                        self.key_pressed = True
+                        break
+                    elif ch_upper == 'F':
+                        self.requested_success = False
+                        self.key_pressed = True
+                        break
+        except Exception:
+            pass
+        finally:
+            self._restore()
+
+    def _restore(self):
+        if self._old_settings is not None:
+            try:
+                termios.tcsetattr(sys.stdin, termios.TCSADRAIN, self._old_settings)
+            except Exception:
+                pass
+
+    def stop(self):
+        self._stop_event.set()
+        self._restore()
+        if self._thread is not None:
+            self._thread.join(timeout=1.0)
+        self._started = False
+
+
 # ── 主控制循环 ─────────────────────────────────────────────────────
 
 def run_inference_loop(robot, zmq_client: InferenceClient,
                        camera: CameraManager,
                        task: str, max_steps: int = 0,
-                       recorder: EpisodeRecorder | None = None) -> bool:
+                       recorder: EpisodeRecorder | None = None,
+                       key_listener: KeyListener | None = None) -> bool:
     """同步主循环：采集 → 请求推理 → MoveJ 移动机械臂 → 读新状态 → 循环。
 
     每一步严格串行：发数据给服务端 → 收 action → MoveJ 到位 → 下一步。
@@ -489,6 +560,7 @@ def run_inference_loop(robot, zmq_client: InferenceClient,
         robot: FR3 机器人实例，None 表示不连接机械臂（仅测试通信）
         max_steps: 最大步数，0 表示无限循环
         recorder: 若提供，每帧数据会追加到 episode 录制
+        key_listener: 若提供，录制中按 T/F 可提前结束并标记 success
 
     Returns:
         是否因服务端返回 done=true 而结束
@@ -526,6 +598,11 @@ def run_inference_loop(robot, zmq_client: InferenceClient,
         while True:
             if max_steps > 0 and step >= max_steps:
                 print(f"\n[*] 达到最大步数 {max_steps}，停止")
+                break
+
+            # 录制模式下检查 T/F 按键
+            if key_listener is not None and key_listener.key_pressed:
+                print(f"\n[*] 检测到按键标记（success={key_listener.requested_success}），结束录制")
                 break
 
             # ── 1. 采集图像 ──
@@ -636,9 +713,9 @@ def run_inference_loop(robot, zmq_client: InferenceClient,
 # ── 入口 ──────────────────────────────────────────────────────────
 
 def ask_episode_success() -> bool:
-    """因 done=true 结束时，询问用户本次 episode 是否成功。"""
+    """询问用户本次 episode 是否成功。"""
     while True:
-        ans = input("\n服务端已返回 done=true，本次 episode 是否成功？T/F: ").strip().upper()
+        ans = input("\n本次 episode 是否成功？T/F: ").strip().upper()
         if ans == "T":
             return True
         if ans == "F":
@@ -721,6 +798,7 @@ def main():
 
     # ── 4. 初始化录制器（--record 时） ──
     recorder = None
+    key_listener = None
     if args.record:
         recorder = EpisodeRecorder(
             save_dir=args.record_dir,
@@ -730,12 +808,15 @@ def main():
             jpeg_quality=args.record_quality,
         )
         recorder.start_episode()
+        key_listener = KeyListener()
+        key_listener.start()
 
     # ── 5. 主循环 ──
     try:
         ended_by_done = run_inference_loop(robot, zmq_client, camera,
                                            task=args.task, max_steps=args.max_steps,
-                                           recorder=recorder)
+                                           recorder=recorder,
+                                           key_listener=key_listener)
     except KeyboardInterrupt:
         print("\n[!] 用户中断，停止运动")
         ended_by_done = False
@@ -746,9 +827,13 @@ def main():
                 pass
     finally:
         if recorder is not None:
-            # 只有因 done=true 结束时才询问 success；否则默认 True
-            success = True
-            if ended_by_done:
+            if key_listener is not None:
+                key_listener.stop()
+            # 录制中按了 T/F 则用对应值；否则询问
+            if key_listener is not None and key_listener.key_pressed:
+                success = key_listener.requested_success
+                print(f"[*] 使用键盘标记的 success={success}")
+            else:
                 success = ask_episode_success()
             recorder.finalize(success=success)
         zmq_client.close()
