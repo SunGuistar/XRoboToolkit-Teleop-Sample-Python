@@ -62,7 +62,7 @@ from fairino import Robot  # noqa: E402
 ROBOT_IP = "192.168.58.2"
 DEFAULT_EPISODE = os.path.normpath(
     os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                 "..", "logs", "fr3_bc", "第三版修正", "raw", "episode_00001.pkl")
+                 "..", "logs", "fr3_bc","标准VLA", "第三版", "correct", "episode_00000.pkl")
 )
 EXAXIS_POS = [0.0, 0.0, 0.0, 0.0]
 SERVO_CMD_TYPE = 1
