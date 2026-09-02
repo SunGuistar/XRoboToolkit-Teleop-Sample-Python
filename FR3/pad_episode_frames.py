@@ -47,15 +47,13 @@ def pad_episode(data: dict, pad_n: int) -> dict:
 
 def main():
     parser = argparse.ArgumentParser(description="在 episode 末尾追加静止帧")
-    parser.add_argument("--src", required=True, help="原始 episode 目录")
-    parser.add_argument("--dst", required=True, help="输出目录")
-    parser.add_argument("--pad-frames", type=int, default=10,
-                        help="追加帧数（默认 10）")
+    parser.add_argument("--src", default="logs/fr3_bc/raw", help="原始 episode 目录（默认 logs/fr3_bc/raw）")
+    parser.add_argument("--dst", default="logs/fr3_bc/raw_padded", help="输出目录（默认 logs/fr3_bc/raw_padded）")
     args = parser.parse_args()
 
     src_dir = args.src
     dst_dir = args.dst
-    pad_n = args.pad_frames
+    pad_n = 10
 
     if not os.path.isdir(src_dir):
         print(f"[!] 源目录不存在: {src_dir}")
