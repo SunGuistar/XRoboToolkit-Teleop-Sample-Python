@@ -189,14 +189,25 @@ class FR3Controller:
         print(f"Connected to FR3 robot at {robot_ip}")
 
         # 检查并尝试清除报警，再上使能（自动模式）。
+        # 注：不可复位故障（如 1-29 关节反馈速度超限）无法用 ResetAllError 清除，
+        # 只能断电重启控制箱；此处提前拦截，避免后续运动指令报错误码 14。
         try:
             _, (main_code, sub_code) = self.robot.GetRobotErrorCode()
             if main_code != 0 or sub_code != 0:
                 print(f"FR3 存在报警（主错误码 {main_code}，子错误码 {sub_code}），尝试 ResetAllError...")
                 self.robot.ResetAllError()
                 time.sleep(1.0)
+                _, (main_code, sub_code) = self.robot.GetRobotErrorCode()
         except Exception as exc:
             print(f"WARNING: 读取/清除 FR3 报警失败：{exc}")
+            main_code, sub_code = 0, 0  # 读取失败不阻塞启动
+
+        if main_code != 0 or sub_code != 0:
+            raise RuntimeError(
+                f"FR3 报警（主码 {main_code}，子码 {sub_code}）清除失败，"
+                "可能为不可复位故障（如 1-29 关节反馈速度超限）。\n"
+                "请将控制箱断电约 30 秒后重新上电，再重试。"
+            )
 
         err = self.robot.Mode(0)  # 自动模式（SDK 外部控制所需）
         if err != 0:
